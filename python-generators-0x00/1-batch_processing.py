@@ -13,8 +13,8 @@ def stream_users_in_batches(batch_size):
             cursor.execute("SELECT * FROM user_data LIMIT %s OFFSET %s", (batch_size, offset))
             rows = cursor.fetchall()
             if not rows:
-                break  # 👈 exits loop instead of using `return`
-            yield rows  # ✅ yields a batch
+                break  # < exits loop instead of using `return`
+            yield rows  # yields a batch
             offset += batch_size
         cursor.close()
         connection.close()
