@@ -1,0 +1,11 @@
+# Python Decorators for Database Operations
+# No external dependencies required - uses built-in Python modules only
+
+# The project uses:
+# - sqlite3 (built-in)
+# - functools (built-in)
+# - time (built-in)
+
+# For development and testing:
+# pytest>=7.0.0  # Optional, for advanced testing
+# black>=22.0.0  # Optional, for code formatting
