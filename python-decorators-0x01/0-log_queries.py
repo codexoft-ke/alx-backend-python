@@ -6,6 +6,7 @@ Create a decorator that logs database queries executed by any function.
 
 import sqlite3
 import functools
+from datetime import datetime
 
 def log_queries(func):
     """
