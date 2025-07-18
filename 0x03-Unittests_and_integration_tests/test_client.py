@@ -186,7 +186,7 @@ class TestIntegrationGithubOrgClient(unittest.TestCase):
         self.assertEqual(result, self.expected_repos)
 
     def test_public_repos_with_license(self) -> None:
-        """Test that public_repos returns the expected list with license filter.
+        """Test that public_repos returns expected list with license filter.
 
         This integration test verifies that the public_repos method
         returns the correct list of repository names when filtered
