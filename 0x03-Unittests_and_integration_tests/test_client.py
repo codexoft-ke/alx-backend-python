@@ -66,7 +66,7 @@ class TestGithubOrgClient(unittest.TestCase):
         with patch.object(GithubOrgClient, 'org',
                           new_callable=PropertyMock) as mock_org:
             mock_org.return_value = expected_payload
-            
+
             # Access the _public_repos_url property
             result = github_client._public_repos_url
 
@@ -99,7 +99,8 @@ class TestGithubOrgClient(unittest.TestCase):
         # Use patch as context manager to mock _public_repos_url
         with patch.object(GithubOrgClient, '_public_repos_url',
                           new_callable=PropertyMock) as mock_repos_url:
-            mock_repos_url.return_value = "https://api.github.com/orgs/google/repos"
+            mock_repos_url.return_value = \
+                "https://api.github.com/orgs/google/repos"
 
             # Call the public_repos method
             result = github_client.public_repos()
