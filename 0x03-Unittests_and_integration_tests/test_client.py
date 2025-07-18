@@ -200,3 +200,7 @@ class TestIntegrationGithubOrgClient(unittest.TestCase):
 
         # Assert the result equals the expected apache2 repos from fixtures
         self.assertEqual(result, self.apache2_repos)
+
+
+if __name__ == "__main__":
+    unittest.main()
