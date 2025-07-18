@@ -1,12 +1,12 @@
 from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-from rest_framework_nested import routers
+from rest_framework import routers
+from rest_framework_nested.routers import NestedDefaultRouter
 from . import views
 
 # Create a router for viewsets - Using Django REST Framework DefaultRouter
-router = DefaultRouter()
-# Create a nested router for more complex routing
-NestedDefaultRouter = routers.NestedDefaultRouter
+router = routers.DefaultRouter()
+# NestedDefaultRouter is available for nested routing
+# Create a nested router for more complex routing available
 router.register(r'conversations', views.ConversationViewSet, basename='conversation')
 router.register(r'messages', views.MessageViewSet, basename='message')
 router.register(r'users', views.UserViewSet, basename='user')
