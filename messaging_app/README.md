@@ -58,13 +58,39 @@ messaging_app/
    python manage.py runserver
    ```
 
-## Features
+## API Endpoints
 
-- Django REST Framework integration
-- Modular app structure with `chats` app
-- Token-based authentication
-- JSON API responses
-- Pagination support
+The messaging app provides comprehensive RESTful API endpoints:
+
+### Base URL: `/api/`
+
+#### Conversations
+- `GET /api/conversations/` - List user's conversations
+- `POST /api/conversations/` - Create new conversation
+- `GET /api/conversations/{id}/` - Get conversation details
+- `PUT/PATCH /api/conversations/{id}/` - Update conversation
+- `DELETE /api/conversations/{id}/` - Delete conversation
+- `POST /api/conversations/{id}/add_participant/` - Add participant
+- `POST /api/conversations/{id}/remove_participant/` - Remove participant
+- `GET /api/conversations/{id}/messages/` - Get conversation messages
+
+#### Messages
+- `GET /api/messages/` - List user's messages
+- `POST /api/messages/` - Send new message
+- `GET /api/messages/{id}/` - Get message details
+- `PUT/PATCH /api/messages/{id}/` - Update message
+- `DELETE /api/messages/{id}/` - Delete message
+- `GET /api/messages/my_messages/` - Get current user's messages
+- `POST /api/messages/{id}/mark_as_read/` - Mark message as read
+
+#### Users
+- `GET /api/users/` - List users
+- `GET /api/users/{id}/` - Get user details
+- `GET /api/users/me/` - Get current user profile
+- `GET /api/users/search/?q=query` - Search users
+
+#### Utility
+- `GET /api/health/` - Health check endpoint
 
 ## API Configuration
 
