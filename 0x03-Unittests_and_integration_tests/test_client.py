@@ -6,7 +6,7 @@ It tests the GithubOrgClient class with various input scenarios.
 """
 import unittest
 from typing import Dict
-from unittest.mock import patch, Mock
+from unittest.mock import patch, Mock, PropertyMock
 from parameterized import parameterized
 from client import GithubOrgClient
 
@@ -46,6 +46,32 @@ class TestGithubOrgClient(unittest.TestCase):
         # Assert get_json was called once with the expected URL
         expected_url = f"https://api.github.com/orgs/{org_name}"
         mock_get_json.assert_called_once_with(expected_url)
+
+    def test_public_repos_url(self) -> None:
+        """Test that _public_repos_url returns the expected value.
+
+        This method tests that the _public_repos_url property correctly
+        returns the repos_url from the mocked org payload.
+        """
+        # Define the expected payload from org
+        expected_payload = {
+            "repos_url": "https://api.github.com/orgs/google/repos",
+            "name": "google"
+        }
+
+        # Create an instance of GithubOrgClient
+        github_client = GithubOrgClient("google")
+
+        # Use patch as context manager to mock the org property
+        with patch.object(GithubOrgClient, 'org',
+                          new_callable=PropertyMock) as mock_org:
+            mock_org.return_value = expected_payload
+            
+            # Access the _public_repos_url property
+            result = github_client._public_repos_url
+
+            # Assert the result equals the expected repos_url
+            self.assertEqual(result, expected_payload["repos_url"])
 
 
 if __name__ == "__main__":
