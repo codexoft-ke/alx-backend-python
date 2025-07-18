@@ -15,6 +15,20 @@ class User(AbstractUser):
         editable=False,
         help_text="Unique identifier for the user"
     )
+    first_name = models.CharField(
+        max_length=150,
+        blank=True,
+        help_text="User's first name"
+    )
+    last_name = models.CharField(
+        max_length=150,
+        blank=True,
+        help_text="User's last name"
+    )
+    password = models.CharField(
+        max_length=128,
+        help_text="User's password (hashed)"
+    )
     phone_number = models.CharField(
         max_length=15,
         blank=True,
@@ -85,7 +99,7 @@ class Conversation(models.Model):
     
     def get_last_message(self):
         """Get the most recent message in this conversation"""
-        return self.messages.order_by('-created_at').first()
+        return self.messages.order_by('-sent_at').first()
 
 
 class Message(models.Model):
@@ -113,6 +127,10 @@ class Message(models.Model):
     message_body = models.TextField(
         help_text="Content of the message"
     )
+    sent_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When the message was sent"
+    )
     created_at = models.DateTimeField(
         auto_now_add=True,
         help_text="When the message was sent"
@@ -126,10 +144,10 @@ class Message(models.Model):
         db_table = 'messages'
         verbose_name = 'Message'
         verbose_name_plural = 'Messages'
-        ordering = ['-created_at']
+        ordering = ['-sent_at']
         indexes = [
-            models.Index(fields=['conversation', '-created_at']),
-            models.Index(fields=['sender', '-created_at']),
+            models.Index(fields=['conversation', '-sent_at']),
+            models.Index(fields=['sender', '-sent_at']),
         ]
     
     def __str__(self):
