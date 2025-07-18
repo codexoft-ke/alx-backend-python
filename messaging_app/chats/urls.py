@@ -8,6 +8,7 @@ router = DefaultRouter()
 # URL patterns for the chats app
 urlpatterns = [
     path('health/', views.health_check, name='health-check'),
+    path('test-serializers/', views.test_serializers, name='test-serializers'),
     # Add your URL patterns here
     # Example: path('messages/', views.MessageListView.as_view(), name='message-list'),
 ]

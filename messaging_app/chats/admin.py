@@ -45,11 +45,11 @@ class MessageAdmin(admin.ModelAdmin):
     """
     Message admin configuration
     """
-    list_display = ('message_id', 'sender', 'conversation', 'get_message_preview', 'created_at')
-    list_filter = ('created_at', 'sender')
+    list_display = ('message_id', 'sender', 'conversation', 'get_message_preview', 'sent_at')
+    list_filter = ('sent_at', 'sender')
     search_fields = ('sender__username', 'message_body', 'conversation__participants__username')
-    ordering = ('-created_at',)
-    readonly_fields = ('message_id', 'created_at', 'updated_at')
+    ordering = ('-sent_at',)
+    readonly_fields = ('message_id', 'sent_at', 'created_at', 'updated_at')
     
     def get_message_preview(self, obj):
         """Display message preview in the admin list"""
