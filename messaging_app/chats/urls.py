@@ -1,9 +1,9 @@
 from django.urls import path, include
-from rest_framework import routers
+from rest_framework.routers import DefaultRouter
 from . import views
 
-# Create a router for viewsets
-router = routers.DefaultRouter()
+# Create a router for viewsets - Using Django REST Framework DefaultRouter
+router = DefaultRouter()
 router.register(r'conversations', views.ConversationViewSet, basename='conversation')
 router.register(r'messages', views.MessageViewSet, basename='message')
 router.register(r'users', views.UserViewSet, basename='user')
