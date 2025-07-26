@@ -124,7 +124,7 @@ class OffensiveLanguageMiddleware:
         return ip
 
 
-class RolePermissionMiddleware:
+class RolepermissionMiddleware:
     """
     Middleware that enforces role-based permissions.
     Only admin and moderator users can access specific actions.
