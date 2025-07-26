@@ -28,20 +28,22 @@ class IsParticipantOfConversation(permissions.BasePermission):
         """
         Allow only participants in a conversation to send, view, update and delete messages
         """
-        # Handle different object types
-        if isinstance(obj, Message):
-            # For messages, check if user is participant of the conversation
-            return obj.conversation.participants.filter(user_id=request.user.user_id).exists()
-        
-        elif isinstance(obj, Conversation):
-            # For conversations, check if user is participant
-            return obj.participants.filter(user_id=request.user.user_id).exists()
-        
-        # For other objects, check if they have a user or sender field
-        if hasattr(obj, 'sender'):
-            return obj.sender == request.user
-        elif hasattr(obj, 'user'):
-            return obj.user == request.user
+        # Handle different HTTP methods for messages and conversations
+        if request.method in ["GET", "POST", "PUT", "PATCH", "DELETE"]:
+            # Handle different object types
+            if isinstance(obj, Message):
+                # For messages, check if user is participant of the conversation
+                return obj.conversation.participants.filter(user_id=request.user.user_id).exists()
+            
+            elif isinstance(obj, Conversation):
+                # For conversations, check if user is participant
+                return obj.participants.filter(user_id=request.user.user_id).exists()
+            
+            # For other objects, check if they have a user or sender field
+            if hasattr(obj, 'sender'):
+                return obj.sender == request.user
+            elif hasattr(obj, 'user'):
+                return obj.user == request.user
         
         # Default deny access
         return False
