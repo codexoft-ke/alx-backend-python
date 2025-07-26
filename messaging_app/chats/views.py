@@ -10,6 +10,8 @@ from django.shortcuts import get_object_or_404
 
 from .models import User, Conversation, Message
 from .permissions import IsParticipantOfConversation
+from .filters import MessageFilter, ConversationFilter
+from .pagination import MessagePagination, ConversationPagination
 from .serializers import (
     UserSerializer, 
     ConversationSerializer, 
@@ -28,7 +30,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
     """
     serializer_class = ConversationSerializer
     permission_classes = [IsParticipantOfConversation]
+    pagination_class = ConversationPagination
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = ConversationFilter
     search_fields = ['participants__username', 'participants__email']
     ordering_fields = ['created_at', 'updated_at']
     ordering = ['-updated_at']
@@ -128,12 +132,13 @@ class ConversationViewSet(viewsets.ModelViewSet):
 class MessageViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing messages
-    Provides CRUD operations for messages
+    Provides CRUD operations for messages with pagination and filtering
     """
     serializer_class = MessageSerializer
     permission_classes = [IsParticipantOfConversation]
+    pagination_class = MessagePagination
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields = ['conversation', 'sender']
+    filterset_class = MessageFilter
     search_fields = ['message_body', 'sender__username']
     ordering_fields = ['sent_at', 'created_at']
     ordering = ['-sent_at']
@@ -165,13 +170,62 @@ class MessageViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def my_messages(self, request):
         """
-        Get all messages sent by the current user
+        Get all messages sent by the current user with pagination and filtering
         """
-        messages = Message.objects.filter(
-            sender=request.user
-        ).select_related('conversation').order_by('-sent_at')
+        messages = self.filter_queryset(
+            Message.objects.filter(sender=request.user)
+            .select_related('conversation')
+            .order_by('-sent_at')
+        )
+        
+        page = self.paginate_queryset(messages)
+        if page is not None:
+            serializer = MessageSimpleSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
         
         serializer = MessageSimpleSerializer(messages, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def by_user(self, request):
+        """
+        Get messages from specific users with time range filtering
+        """
+        # Get query parameters
+        user_id = request.query_params.get('user_id')
+        username = request.query_params.get('username')
+        
+        if not user_id and not username:
+            return Response(
+                {'error': 'Either user_id or username parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Base queryset with user's conversations
+        queryset = self.get_queryset()
+        
+        # Filter by user
+        if user_id:
+            try:
+                user = User.objects.get(user_id=user_id)
+                queryset = queryset.filter(sender=user)
+            except User.DoesNotExist:
+                return Response(
+                    {'error': 'User not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        elif username:
+            queryset = queryset.filter(sender__username__icontains=username)
+        
+        # Apply additional filters
+        filtered_queryset = self.filter_queryset(queryset)
+        
+        page = self.paginate_queryset(filtered_queryset)
+        if page is not None:
+            serializer = MessageSimpleSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = MessageSimpleSerializer(filtered_queryset, many=True)
         return Response(serializer.data)
     
     @action(detail=True, methods=['post'])
