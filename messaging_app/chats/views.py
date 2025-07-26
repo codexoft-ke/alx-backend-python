@@ -9,6 +9,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
 from .models import User, Conversation, Message
+from .permissions import IsParticipantOfConversation
 from .serializers import (
     UserSerializer, 
     ConversationSerializer, 
@@ -26,7 +27,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
     Provides CRUD operations for conversations
     """
     serializer_class = ConversationSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsParticipantOfConversation]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     search_fields = ['participants__username', 'participants__email']
     ordering_fields = ['created_at', 'updated_at']
@@ -130,7 +131,7 @@ class MessageViewSet(viewsets.ModelViewSet):
     Provides CRUD operations for messages
     """
     serializer_class = MessageSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsParticipantOfConversation]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['conversation', 'sender']
     search_fields = ['message_body', 'sender__username']
@@ -280,7 +281,7 @@ def test_serializers(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsParticipantOfConversation])
 def create_conversation(request):
     """
     Create a new conversation with participants
@@ -299,7 +300,7 @@ def create_conversation(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsParticipantOfConversation])
 def send_message(request, conversation_id):
     """
     Send a message to an existing conversation
