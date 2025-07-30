@@ -236,5 +236,98 @@ def message_deleted_notification(sender, instance, **kwargs):
     print(f"✅ Deletion notification created for {instance.receiver.username}")
 
 
+@receiver(post_delete, sender=User)
+def cleanup_user_data(sender, instance, **kwargs):
+    """
+    Signal handler that cleans up all user-related data when a user is deleted.
+    
+    This function is triggered automatically when a User instance is deleted.
+    It ensures all related data is properly cleaned up, respecting foreign key constraints.
+    
+    Args:
+        sender: The model class (User)
+        instance: The User instance that was deleted
+        **kwargs: Additional keyword arguments
+    """
+    username = instance.username
+    print(f"🧹 Starting cleanup for deleted user: {username}")
+    
+    try:
+        # Track counts for logging
+        cleanup_stats = {
+            'messages_sent': 0,
+            'messages_received': 0,
+            'notifications': 0,
+            'message_history': 0,
+            'user_profile': 0
+        }
+        
+        # Clean up messages sent by this user
+        sent_messages = Message.objects.filter(sender=instance)
+        cleanup_stats['messages_sent'] = sent_messages.count()
+        if cleanup_stats['messages_sent'] > 0:
+            # Delete message histories first (foreign key constraint)
+            for message in sent_messages:
+                MessageHistory.objects.filter(message=message).delete()
+            sent_messages.delete()
+            print(f"   ✅ Deleted {cleanup_stats['messages_sent']} sent messages")
+        
+        # Clean up messages received by this user
+        received_messages = Message.objects.filter(receiver=instance)
+        cleanup_stats['messages_received'] = received_messages.count()
+        if cleanup_stats['messages_received'] > 0:
+            # Delete message histories first (foreign key constraint)
+            for message in received_messages:
+                MessageHistory.objects.filter(message=message).delete()
+            received_messages.delete()
+            print(f"   ✅ Deleted {cleanup_stats['messages_received']} received messages")
+        
+        # Clean up notifications for this user
+        user_notifications = Notification.objects.filter(user=instance)
+        cleanup_stats['notifications'] = user_notifications.count()
+        if cleanup_stats['notifications'] > 0:
+            user_notifications.delete()
+            print(f"   ✅ Deleted {cleanup_stats['notifications']} notifications")
+        
+        # Clean up message edit history by this user
+        user_message_edits = MessageHistory.objects.filter(edited_by=instance)
+        cleanup_stats['message_history'] = user_message_edits.count()
+        if cleanup_stats['message_history'] > 0:
+            user_message_edits.delete()
+            print(f"   ✅ Deleted {cleanup_stats['message_history']} message edit entries")
+        
+        # Clean up user profile (this should be handled by CASCADE, but let's be explicit)
+        try:
+            if hasattr(instance, 'profile'):
+                instance.profile.delete()
+                cleanup_stats['user_profile'] = 1
+                print(f"   ✅ Deleted user profile")
+        except UserProfile.DoesNotExist:
+            pass  # Profile might not exist or already deleted by CASCADE
+        
+        # Log summary
+        total_items = sum(cleanup_stats.values())
+        print(f"🎉 User cleanup completed for '{username}': {total_items} items deleted")
+        print(f"   📊 Breakdown: {cleanup_stats}")
+        
+        # Create a system notification for admins (if there's an admin user)
+        try:
+            admin_users = User.objects.filter(is_superuser=True)
+            for admin in admin_users:
+                Notification.objects.create(
+                    user=admin,
+                    notification_type='user_offline',  # Reusing existing type
+                    title=f'User Account Deleted: {username}',
+                    description=f'User "{username}" deleted their account. {total_items} related data items were cleaned up.'
+                )
+        except Exception as e:
+            print(f"   ⚠️ Could not create admin notification: {e}")
+            
+    except Exception as e:
+        print(f"❌ Error during user data cleanup for '{username}': {e}")
+        # Don't raise the exception to avoid preventing user deletion
+        # Log the error for debugging purposes
+
+
 # Import Q for complex queries
 from django.db import models
