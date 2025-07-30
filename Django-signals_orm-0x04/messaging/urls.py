@@ -13,6 +13,7 @@ urlpatterns = [
     
     # Unread messages views using custom managers
     path('unread/', views.UnreadMessagesView.as_view(), name='unread_messages'),
+    path('unread-inbox/', views.unread_inbox_view, name='unread_inbox'),
     path('inbox/', views.OptimizedInboxView.as_view(), name='optimized_inbox'),
     
     # Threaded conversation views

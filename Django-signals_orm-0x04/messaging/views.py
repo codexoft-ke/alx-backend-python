@@ -37,8 +37,8 @@ class UnreadMessagesView(LoginRequiredMixin, ListView):
         Uses the UnreadMessagesManager to get only unread messages
         and .only() to retrieve minimal fields for performance.
         """
-        # Use the custom unread manager with optimization
-        return Message.unread.for_user(self.request.user).order_by('-timestamp')
+        # Use the custom unread manager with the specific method name
+        return Message.unread.unread_for_user(self.request.user)
 
     def get_context_data(self, **kwargs):
         """Add unread message statistics to context."""
@@ -208,6 +208,37 @@ def conversation_unread_count_api(request, conversation_id):
         
     except Message.DoesNotExist:
         return JsonResponse({'error': 'Conversation not found'}, status=404)
+
+
+@login_required
+def unread_inbox_view(request):
+    """
+    Simple function-based view demonstrating the use of custom managers.
+    
+    This view uses Message.unread.unread_for_user() to display only
+    unread messages for the current user's inbox.
+    """
+    user = request.user
+    
+    # Use the custom UnreadMessagesManager to get unread messages
+    unread_messages = Message.unread.unread_for_user(user)
+    
+    # Get additional statistics using other custom managers
+    unread_count = Message.unread.count_for_user(user)
+    recent_conversations = Message.conversations.for_user(user)[:5]
+    
+    # Get optimized inbox preview (limited fields)
+    inbox_preview = Message.unread.inbox_for_user(user, limit=10)
+    
+    context = {
+        'unread_messages': unread_messages,
+        'unread_count': unread_count,
+        'recent_conversations': recent_conversations,
+        'inbox_preview': inbox_preview,
+        'page_title': f'Unread Messages ({unread_count})'
+    }
+    
+    return render(request, 'messaging/unread_inbox.html', context)
 
 
 class MessageListView(LoginRequiredMixin, ListView):

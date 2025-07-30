@@ -7,6 +7,7 @@ a messaging system with automatic notifications using Django signals.
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+from .managers import UnreadMessagesManager, ReadMessagesManager, ConversationManager, OptimizedMessageManager
 
 
 class UnreadMessagesQuerySet(models.QuerySet):

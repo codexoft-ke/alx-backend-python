@@ -49,9 +49,137 @@ The project demonstrates the implementation of Django signals to automatically n
 - Filtering and searching capabilities
 - Visual indicators for read/unread status
 
+## Custom ORM Managers
+
+### Overview
+The project implements custom Django ORM managers for efficient querying of unread messages and optimized database operations.
+
+### Custom Managers
+
+#### 1. UnreadMessagesManager
+Specialized manager for handling unread messages with optimized queries.
+
+**Features:**
+- Filters unread messages for specific users
+- Uses `.only()` optimization to load minimal fields
+- Provides bulk operations for marking messages as read
+- Includes threading support for conversation views
+
+**Usage:**
+```python
+# Get unread messages for a user (optimized with .only())
+unread_messages = Message.unread.for_user(user)
+
+# Count unread messages efficiently
+count = Message.unread.count_for_user(user)
+
+# Get optimized inbox with minimal fields
+inbox = Message.unread.inbox_for_user(user, limit=50)
+```
+
+#### 2. ReadMessagesManager
+Manager for accessing read messages.
+
+```python
+# Get read messages for a user
+read_messages = Message.read.for_user(user)
+```
+
+#### 3. ConversationManager
+Manager for handling conversation threads (root messages).
+
+```python
+# Get conversations with unread counts
+conversations = Message.conversations.with_unread_count(user)
+
+# Get conversation threads for a user
+threads = Message.conversations.for_user(user)
+```
+
+### Query Optimization Techniques
+
+#### .only() Field Optimization
+The custom managers use `.only()` to load only necessary fields, reducing memory usage and improving performance:
+
+```python
+# Optimized query - loads only specific fields
+messages = Message.unread.for_user(user).only(
+    'id', 'sender__username', 'content', 'timestamp', 'is_read'
+)
+
+# Instead of loading all model fields
+messages = Message.objects.filter(receiver=user, is_read=False)
+```
+
+#### select_related() for Foreign Keys
+Optimizes queries by joining related tables:
+
+```python
+messages = Message.objects.select_related('sender', 'receiver', 'parent_message')
+```
+
+#### prefetch_related() for Reverse Relationships
+Efficiently loads related objects:
+
+```python
+messages = Message.objects.prefetch_related(
+    'replies__sender',
+    'history__edited_by'
+)
+```
+
+### Performance Benefits
+
+1. **Reduced Database Queries**: Custom managers minimize the number of database hits
+2. **Memory Optimization**: `.only()` loads only necessary fields
+3. **Bulk Operations**: Efficient bulk updates for marking messages as read
+4. **Optimized Filtering**: Pre-built filters for common use cases
+
+### Example Performance Comparison
+
+**Without Custom Managers:**
+```python
+# Multiple queries, loads all fields
+messages = Message.objects.filter(receiver=user, is_read=False)
+count = messages.count()
+for msg in messages:
+    print(f"{msg.sender.username}: {msg.content}")  # N+1 query problem
+```
+
+**With Custom Managers:**
+```python
+# Single optimized query with only necessary fields
+messages = Message.unread.for_user(user)  # Uses .only() and select_related()
+count = Message.unread.count_for_user(user)
+for msg in messages:
+    print(f"{msg.sender.username}: {msg.content}")  # No additional queries
+```
+
+### API Endpoints Using Custom Managers
+
+The project includes API endpoints that demonstrate the custom managers:
+
+- `GET /api/unread/` - Get unread messages with pagination
+- `POST /api/mark-as-read/` - Bulk mark messages as read
+- `GET /api/conversation/{id}/unread-count/` - Get unread count for conversation
+
+### Testing Custom Managers
+
+Run the test command to see the custom managers in action:
+
+```bash
+python manage.py test_custom_managers --create-data
+```
+
+This demonstrates:
+- Query optimization with `.only()`
+- Performance comparison between optimized and standard queries
+- Bulk operations for marking messages as read
+- Conversation threading with custom managers
+
 ## Models
 
-### Message Model
+### Message Model (Enhanced)
 ```python
 class Message(models.Model):
     sender = models.ForeignKey(User, related_name='sent_messages')
