@@ -9,6 +9,259 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 
 
+class UnreadMessagesQuerySet(models.QuerySet):
+    """
+    Custom QuerySet for unread messages with optimized queries.
+    
+    Provides methods for filtering and optimizing unread message queries.
+    """
+    
+    def unread_for_user(self, user):
+        """
+        Filter unread messages for a specific user.
+        
+        Args:
+            user: The User instance to filter messages for
+            
+        Returns:
+            QuerySet: Filtered queryset of unread messages for the user
+        """
+        return self.filter(receiver=user, is_read=False)
+    
+    def unread_count_for_user(self, user):
+        """
+        Get count of unread messages for a specific user.
+        
+        Args:
+            user: The User instance to count messages for
+            
+        Returns:
+            int: Number of unread messages
+        """
+        return self.filter(receiver=user, is_read=False).count()
+    
+    def mark_as_read_for_user(self, user):
+        """
+        Mark all unread messages as read for a specific user.
+        
+        Args:
+            user: The User instance to mark messages as read for
+            
+        Returns:
+            int: Number of messages updated
+        """
+        return self.filter(receiver=user, is_read=False).update(
+            is_read=True,
+            read_at=timezone.now()
+        )
+    
+    def optimized_for_inbox(self):
+        """
+        Optimize queryset for inbox display with minimal fields.
+        
+        Uses select_related and only() for performance optimization.
+        
+        Returns:
+            QuerySet: Optimized queryset for inbox display
+        """
+        return self.select_related('sender', 'parent_message').only(
+            'id', 'sender__username', 'sender__first_name', 'sender__last_name',
+            'content', 'timestamp', 'is_read', 'edited', 'thread_level',
+            'parent_message__id', 'parent_message__content'
+        )
+    
+    def with_thread_info(self):
+        """
+        Include thread information for threaded conversations.
+        
+        Returns:
+            QuerySet: Queryset with thread-related annotations
+        """
+        return self.annotate(
+            reply_count=models.Count('replies'),
+            has_unread_replies=models.Exists(
+                models.Subquery(
+                    self.model.objects.filter(
+                        parent_message=models.OuterRef('pk'),
+                        is_read=False
+                    ).values('pk')[:1]
+                )
+            )
+        )
+    
+    def recent_conversations(self, user, limit=20):
+        """
+        Get recent conversations for a user (root messages only).
+        
+        Args:
+            user: The User instance
+            limit: Maximum number of conversations to return
+            
+        Returns:
+            QuerySet: Recent conversations ordered by latest activity
+        """
+        return self.filter(
+            models.Q(sender=user) | models.Q(receiver=user),
+            parent_message__isnull=True
+        ).annotate(
+            latest_activity=models.Max('replies__timestamp'),
+            unread_replies=models.Count(
+                'replies',
+                filter=models.Q(replies__receiver=user, replies__is_read=False)
+            )
+        ).order_by(
+            models.Case(
+                models.When(latest_activity__isnull=False, then='latest_activity'),
+                default='timestamp'
+            ).desc()
+        )[:limit]
+
+
+class UnreadMessagesManager(models.Manager):
+    """
+    Custom manager for unread messages.
+    
+    Provides convenient methods for working with unread messages
+    and optimized queries for common use cases.
+    """
+    
+    def get_queryset(self):
+        """Return the custom QuerySet."""
+        return UnreadMessagesQuerySet(self.model, using=self._db)
+    
+    def for_user(self, user):
+        """
+        Get unread messages for a specific user with optimized queries.
+        
+        Args:
+            user: The User instance to get unread messages for
+            
+        Returns:
+            QuerySet: Optimized unread messages for the user
+        """
+        return self.get_queryset().unread_for_user(user).optimized_for_inbox()
+    
+    def count_for_user(self, user):
+        """
+        Get count of unread messages for a user.
+        
+        Args:
+            user: The User instance
+            
+        Returns:
+            int: Number of unread messages
+        """
+        return self.get_queryset().unread_count_for_user(user)
+    
+    def inbox_for_user(self, user, limit=50):
+        """
+        Get optimized inbox view for a user.
+        
+        Returns unread messages first, then recent read messages,
+        all optimized for display performance.
+        
+        Args:
+            user: The User instance
+            limit: Maximum number of messages to return
+            
+        Returns:
+            QuerySet: Optimized inbox messages
+        """
+        return self.get_queryset().filter(
+            receiver=user
+        ).optimized_for_inbox().with_thread_info().order_by(
+            'is_read',  # Unread first
+            '-timestamp'
+        )[:limit]
+    
+    def conversation_threads_for_user(self, user, limit=20):
+        """
+        Get conversation threads with unread message indicators.
+        
+        Args:
+            user: The User instance
+            limit: Maximum number of conversations
+            
+        Returns:
+            QuerySet: Conversation threads with unread indicators
+        """
+        return self.get_queryset().recent_conversations(user, limit)
+
+
+class ReadMessagesManager(models.Manager):
+    """
+    Custom manager for read messages.
+    
+    Provides methods for working with read messages.
+    """
+    
+    def get_queryset(self):
+        """Return only read messages."""
+        return super().get_queryset().filter(is_read=True)
+    
+    def for_user(self, user):
+        """
+        Get read messages for a specific user.
+        
+        Args:
+            user: The User instance
+            
+        Returns:
+            QuerySet: Read messages for the user
+        """
+        return self.get_queryset().filter(receiver=user)
+
+
+class ConversationManager(models.Manager):
+    """
+    Custom manager for conversation threads (root messages).
+    
+    Provides methods for working with conversation threads.
+    """
+    
+    def get_queryset(self):
+        """Return only root messages (conversations)."""
+        return super().get_queryset().filter(parent_message__isnull=True)
+    
+    def for_user(self, user):
+        """
+        Get conversations for a specific user.
+        
+        Args:
+            user: The User instance
+            
+        Returns:
+            QuerySet: Conversations involving the user
+        """
+        return self.get_queryset().filter(
+            models.Q(sender=user) | models.Q(receiver=user)
+        )
+    
+    def with_unread_count(self, user):
+        """
+        Annotate conversations with unread message counts.
+        
+        Args:
+            user: The User instance
+            
+        Returns:
+            QuerySet: Conversations with unread counts
+        """
+        return self.for_user(user).annotate(
+            unread_count=models.Count(
+                'replies',
+                filter=models.Q(replies__receiver=user, replies__is_read=False)
+            ) + models.Case(
+                models.When(
+                    models.Q(receiver=user, is_read=False),
+                    then=1
+                ),
+                default=0,
+                output_field=models.IntegerField()
+            )
+        )
+
+
 class Message(models.Model):
     """
     Model representing a message between users.
@@ -44,6 +297,11 @@ class Message(models.Model):
         default=False,
         help_text="Whether the message has been read by the receiver"
     )
+    read_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the message was read by the receiver"
+    )
     edited = models.BooleanField(
         default=False,
         help_text="Whether the message has been edited"
@@ -66,6 +324,12 @@ class Message(models.Model):
         help_text="The depth level in the conversation thread (0 for root messages)"
     )
 
+    # Custom managers
+    objects = models.Manager()  # Default manager
+    unread = UnreadMessagesManager()  # Custom manager for unread messages
+    read = ReadMessagesManager()  # Custom manager for read messages
+    conversations = ConversationManager()  # Custom manager for conversation threads
+
     class Meta:
         ordering = ['-timestamp']
         verbose_name = "Message"
@@ -75,8 +339,9 @@ class Message(models.Model):
         return f"Message from {self.sender.username} to {self.receiver.username} at {self.timestamp}"
 
     def mark_as_read(self):
-        """Mark the message as read."""
+        """Mark the message as read with timestamp."""
         self.is_read = True
+        self.read_at = timezone.now()
         self.save()
 
     def mark_as_edited(self):
@@ -222,6 +487,74 @@ class Message(models.Model):
             conversations[root.id]['matching_messages'].append(message)
         
         return list(conversations.values())
+
+    @classmethod
+    def get_unread_inbox(cls, user, limit=50):
+        """
+        Get user's unread messages using the custom manager.
+        
+        This method demonstrates the use of the UnreadMessagesManager
+        with optimized queries using .only() for performance.
+        """
+        return cls.unread.for_user(user)[:limit]
+
+    @classmethod
+    def get_inbox_summary(cls, user):
+        """
+        Get inbox summary statistics using custom managers.
+        
+        Returns:
+            dict: Summary of user's inbox statistics
+        """
+        return {
+            'unread_count': cls.unread.count_for_user(user),
+            'read_count': cls.read.for_user(user).count(),
+            'conversation_count': cls.conversations.for_user(user).count(),
+            'total_messages': cls.objects.filter(
+                models.Q(sender=user) | models.Q(receiver=user)
+            ).count()
+        }
+
+    @classmethod
+    def mark_conversation_as_read(cls, conversation_id, user):
+        """
+        Mark all messages in a conversation as read for a user.
+        
+        Uses the custom manager's bulk update capability.
+        """
+        conversation = cls.objects.get(id=conversation_id)
+        root = conversation.get_root_message()
+        
+        # Get all messages in the thread that are unread for this user
+        thread_messages = [root] + list(root.get_all_replies())
+        message_ids = [msg.id for msg in thread_messages]
+        
+        # Use bulk update for efficiency
+        updated_count = cls.objects.filter(
+            id__in=message_ids,
+            receiver=user,
+            is_read=False
+        ).update(
+            is_read=True,
+            read_at=timezone.now()
+        )
+        
+        return updated_count
+
+    def get_unread_replies_for_user(self, user):
+        """
+        Get unread replies to this message for a specific user.
+        
+        Uses the custom UnreadMessagesManager for optimization.
+        """
+        all_replies = self.get_all_replies()
+        unread_replies = []
+        
+        for reply in all_replies:
+            if reply.receiver == user and not reply.is_read:
+                unread_replies.append(reply)
+        
+        return unread_replies
 
 
 class MessageHistory(models.Model):

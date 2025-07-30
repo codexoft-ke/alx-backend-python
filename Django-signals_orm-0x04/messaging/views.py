@@ -20,6 +20,196 @@ from django.utils import timezone
 from .models import Message, Notification, MessageHistory
 
 
+class UnreadMessagesView(LoginRequiredMixin, ListView):
+    """
+    View to display only unread messages using the custom UnreadMessagesManager.
+    
+    Demonstrates the use of custom managers with .only() optimization.
+    """
+    template_name = 'messaging/unread_messages.html'
+    context_object_name = 'unread_messages'
+    paginate_by = 25
+
+    def get_queryset(self):
+        """
+        Get unread messages using the custom manager with optimized queries.
+        
+        Uses the UnreadMessagesManager to get only unread messages
+        and .only() to retrieve minimal fields for performance.
+        """
+        # Use the custom unread manager with optimization
+        return Message.unread.for_user(self.request.user).order_by('-timestamp')
+
+    def get_context_data(self, **kwargs):
+        """Add unread message statistics to context."""
+        context = super().get_context_data(**kwargs)
+        user = self.request.user
+        
+        # Use custom managers for statistics
+        context['inbox_stats'] = Message.get_inbox_summary(user)
+        context['recent_conversations'] = Message.conversations.for_user(user)[:5]
+        
+        return context
+
+
+class OptimizedInboxView(LoginRequiredMixin, ListView):
+    """
+    Highly optimized inbox view using custom managers and .only() fields.
+    
+    Demonstrates advanced ORM optimization techniques with custom managers.
+    """
+    template_name = 'messaging/optimized_inbox.html'
+    context_object_name = 'messages'
+    paginate_by = 30
+
+    def get_queryset(self):
+        """
+        Get inbox messages with maximum optimization.
+        
+        Uses custom managers and .only() to retrieve minimal fields,
+        reducing database load and memory usage.
+        """
+        user = self.request.user
+        
+        # Use the custom unread manager for optimized inbox display
+        return Message.unread.inbox_for_user(user, limit=100)
+
+    def get_context_data(self, **kwargs):
+        """Add comprehensive inbox context with custom manager data."""
+        context = super().get_context_data(**kwargs)
+        user = self.request.user
+        
+        # Get statistics using custom managers
+        context.update({
+            'unread_count': Message.unread.count_for_user(user),
+            'conversation_threads': Message.conversations.with_unread_count(user)[:10],
+            'inbox_summary': Message.get_inbox_summary(user),
+            'recent_activity': self.get_recent_activity(user)
+        })
+        
+        return context
+
+    def get_recent_activity(self, user):
+        """Get recent activity using optimized queries."""
+        return {
+            'recent_sent': Message.objects.filter(sender=user).only(
+                'id', 'receiver__username', 'content', 'timestamp', 'is_read'
+            ).select_related('receiver')[:5],
+            'recent_received': Message.objects.filter(receiver=user).only(
+                'id', 'sender__username', 'content', 'timestamp', 'is_read'
+            ).select_related('sender')[:5]
+        }
+
+
+@login_required
+def mark_messages_as_read(request):
+    """
+    API endpoint to mark messages as read using custom manager methods.
+    
+    Demonstrates bulk operations with custom managers.
+    """
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST method required'}, status=405)
+    
+    user = request.user
+    message_ids = request.POST.getlist('message_ids[]')
+    
+    if not message_ids:
+        # Mark all unread messages as read
+        updated_count = Message.objects.filter(
+            receiver=user,
+            is_read=False
+        ).update(
+            is_read=True,
+            read_at=timezone.now()
+        )
+    else:
+        # Mark specific messages as read
+        updated_count = Message.objects.filter(
+            id__in=message_ids,
+            receiver=user,
+            is_read=False
+        ).update(
+            is_read=True,
+            read_at=timezone.now()
+        )
+    
+    # Get updated statistics using custom managers
+    stats = Message.get_inbox_summary(user)
+    
+    return JsonResponse({
+        'success': True,
+        'updated_count': updated_count,
+        'new_unread_count': stats['unread_count'],
+        'stats': stats
+    })
+
+
+@login_required
+def unread_messages_api(request):
+    """
+    API endpoint to get unread messages using custom manager.
+    
+    Returns optimized unread message data using .only() fields.
+    """
+    user = request.user
+    limit = int(request.GET.get('limit', 20))
+    offset = int(request.GET.get('offset', 0))
+    
+    # Use custom manager with optimization
+    unread_messages = Message.unread.for_user(user)[offset:offset + limit]
+    
+    messages_data = []
+    for message in unread_messages:
+        messages_data.append({
+            'id': message.id,
+            'sender': message.sender.username,
+            'content_preview': message.content[:100] + '...' if len(message.content) > 100 else message.content,
+            'timestamp': message.timestamp.isoformat(),
+            'is_reply': message.parent_message_id is not None,
+            'thread_level': message.thread_level
+        })
+    
+    return JsonResponse({
+        'messages': messages_data,
+        'total_unread': Message.unread.count_for_user(user),
+        'has_more': len(unread_messages) == limit
+    })
+
+
+@login_required
+def conversation_unread_count_api(request, conversation_id):
+    """
+    API endpoint to get unread count for a specific conversation.
+    
+    Uses custom managers for efficient counting.
+    """
+    user = request.user
+    
+    try:
+        root_message = Message.conversations.get(id=conversation_id)
+        
+        # Check if user has access to this conversation
+        if not (root_message.sender == user or root_message.receiver == user):
+            return JsonResponse({'error': 'Access denied'}, status=403)
+        
+        # Count unread messages in this conversation thread
+        thread_messages = [root_message] + list(root_message.get_all_replies())
+        unread_count = sum(
+            1 for msg in thread_messages 
+            if msg.receiver == user and not msg.is_read
+        )
+        
+        return JsonResponse({
+            'conversation_id': conversation_id,
+            'unread_count': unread_count,
+            'total_messages': len(thread_messages)
+        })
+        
+    except Message.DoesNotExist:
+        return JsonResponse({'error': 'Conversation not found'}, status=404)
+
+
 class MessageListView(LoginRequiredMixin, ListView):
     """
     View to list messages for the current user with optimized queries.
@@ -267,17 +457,39 @@ def send_threaded_reply(request, parent_id):
 
 
 class NotificationListView(LoginRequiredMixin, ListView):
-    """View to list notifications for the current user."""
+    """
+    View to list notifications for the current user with optimized queries.
+    
+    Uses select_related and prefetch_related for efficient loading.
+    """
     model = Notification
     template_name = 'messaging/notification_list.html'
     context_object_name = 'notifications'
     paginate_by = 20
 
     def get_queryset(self):
-        """Return notifications for the current user."""
+        """
+        Return notifications for the current user with optimized prefetching.
+        
+        Uses select_related for foreign keys and prefetch_related to 
+        optimize loading of related message data.
+        """
         return Notification.objects.filter(
             user=self.request.user
-        ).select_related('message')
+        ).select_related(
+            'user', 'message', 'message__sender', 'message__receiver'
+        ).prefetch_related(
+            # Prefetch message history for notifications about edited messages
+            Prefetch(
+                'message__history',
+                queryset=MessageHistory.objects.select_related('edited_by').order_by('-version')[:3]
+            ),
+            # Prefetch message replies for thread context
+            Prefetch(
+                'message__replies',
+                queryset=Message.objects.select_related('sender').order_by('timestamp')[:5]
+            )
+        ).order_by('-created_at')
 
 
 class MessageHistoryView(LoginRequiredMixin, DetailView):
