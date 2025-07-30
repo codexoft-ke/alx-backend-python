@@ -64,17 +64,206 @@ class MessageListView(LoginRequiredMixin, ListView):
 
 
 class SendMessageView(LoginRequiredMixin, CreateView):
-    """View to send a new message."""
+    """
+    View to send a new message or reply to an existing message.
+    
+    Handles both root messages and threaded replies.
+    """
     model = Message
-    fields = ['receiver', 'content']
+    fields = ['receiver', 'content', 'parent_message']
     template_name = 'messaging/send_message.html'
     success_url = reverse_lazy('messaging:message_list')
 
     def form_valid(self, form):
-        """Set the sender to the current user."""
+        """Set the sender to the current user and handle threading."""
         form.instance.sender = self.request.user
+        
+        # If this is a reply, set the thread level
+        if form.instance.parent_message:
+            form.instance.thread_level = form.instance.parent_message.thread_level + 1
+        
         messages.success(self.request, 'Message sent successfully!')
         return super().form_valid(form)
+
+    def get_context_data(self, **kwargs):
+        """Add parent message to context if replying."""
+        context = super().get_context_data(**kwargs)
+        parent_id = self.request.GET.get('reply_to')
+        if parent_id:
+            try:
+                parent_message = Message.objects.select_related('sender', 'receiver').get(id=parent_id)
+                context['parent_message'] = parent_message
+                context['is_reply'] = True
+            except Message.DoesNotExist:
+                pass
+        return context
+
+
+class ThreadedConversationView(LoginRequiredMixin, DetailView):
+    """
+    View to display a complete threaded conversation with optimized queries.
+    
+    Uses recursive queries and advanced prefetching for efficient loading
+    of the entire conversation tree.
+    """
+    model = Message
+    template_name = 'messaging/threaded_conversation.html'
+    context_object_name = 'root_message'
+
+    def get_queryset(self):
+        """Get messages with optimized prefetching."""
+        return Message.objects.select_related(
+            'sender', 'receiver', 'parent_message'
+        ).prefetch_related(
+            'replies__sender',
+            'replies__receiver', 
+            'history__edited_by'
+        )
+
+    def get_object(self):
+        """Get the root message and verify permissions."""
+        message = super().get_object()
+        
+        # Get root message if this is a reply
+        while message.parent_message:
+            message = message.parent_message
+        
+        # Verify user has permission to view this conversation
+        user = self.request.user
+        if not (message.sender == user or message.receiver == user):
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied("You don't have permission to view this conversation.")
+        
+        return message
+
+    def get_context_data(self, **kwargs):
+        """Build the complete threaded conversation."""
+        context = super().get_context_data(**kwargs)
+        root_message = self.object
+        
+        # Get all messages in thread with optimized query
+        thread_messages = self.get_thread_messages(root_message)
+        
+        # Build conversation tree
+        conversation_tree = self.build_conversation_tree(thread_messages)
+        
+        context.update({
+            'conversation_tree': conversation_tree,
+            'thread_messages': thread_messages,
+            'thread_stats': self.get_thread_stats(thread_messages),
+            'can_reply': self.user_can_reply(root_message)
+        })
+        
+        return context
+
+    def get_thread_messages(self, root_message):
+        """
+        Get all messages in thread using recursive querying.
+        
+        Uses optimized queries with select_related and prefetch_related.
+        """
+        # Collect all message IDs in the thread
+        message_ids = {root_message.id}
+        
+        def collect_replies(msg_ids, depth=0, max_depth=20):
+            if depth >= max_depth:
+                return
+            
+            reply_ids = set(Message.objects.filter(
+                parent_message_id__in=msg_ids
+            ).values_list('id', flat=True))
+            
+            if reply_ids:
+                message_ids.update(reply_ids)
+                collect_replies(reply_ids, depth + 1, max_depth)
+        
+        collect_replies({root_message.id})
+        
+        # Fetch all messages with optimized queries
+        return Message.objects.filter(
+            id__in=message_ids
+        ).select_related(
+            'sender', 'receiver', 'parent_message'
+        ).prefetch_related(
+            Prefetch(
+                'history',
+                queryset=MessageHistory.objects.select_related('edited_by').order_by('-version')
+            )
+        ).order_by('timestamp')
+
+    def build_conversation_tree(self, messages):
+        """Build hierarchical tree structure from flat message list."""
+        message_dict = {msg.id: msg for msg in messages}
+        
+        for message in messages:
+            message.children = []
+            message.depth = 0
+        
+        root_messages = []
+        for message in messages:
+            if message.parent_message_id is None:
+                root_messages.append(message)
+            else:
+                parent = message_dict.get(message.parent_message_id)
+                if parent:
+                    parent.children.append(message)
+                    message.depth = parent.depth + 1
+        
+        return root_messages
+
+    def get_thread_stats(self, messages):
+        """Calculate thread statistics."""
+        return {
+            'total_messages': len(messages),
+            'max_depth': max((getattr(m, 'depth', 0) for m in messages), default=0),
+            'participants': len(set(m.sender_id for m in messages))
+        }
+
+    def user_can_reply(self, root_message):
+        """Check if user can reply to this conversation."""
+        user = self.request.user
+        return user == root_message.sender or user == root_message.receiver
+
+
+@login_required
+@require_POST
+def send_threaded_reply(request, parent_id):
+    """
+    Send a reply to a specific message using optimized queries.
+    
+    This view demonstrates the sender=request.user pattern.
+    """
+    parent_message = get_object_or_404(
+        Message.objects.select_related('sender', 'receiver'), 
+        id=parent_id
+    )
+    
+    content = request.POST.get('content', '').strip()
+    if not content:
+        return JsonResponse({'error': 'Content is required'}, status=400)
+    
+    # Determine receiver (opposite participant in conversation)
+    if parent_message.sender == request.user:
+        receiver = parent_message.receiver
+    else:
+        receiver = parent_message.sender
+    
+    # Create reply with sender=request.user
+    reply = Message.objects.create(
+        sender=request.user,  # This is the required pattern
+        receiver=receiver,
+        content=content,
+        parent_message=parent_message,
+        thread_level=parent_message.thread_level + 1
+    )
+    
+    return JsonResponse({
+        'success': True,
+        'message_id': reply.id,
+        'sender': reply.sender.username,
+        'content': reply.content,
+        'timestamp': reply.timestamp.isoformat()
+    })
 
 
 class NotificationListView(LoginRequiredMixin, ListView):
