@@ -18,6 +18,7 @@ urlpatterns = [
     
     # Threaded conversation views
     path('conversation/<int:pk>/', views.ThreadedConversationView.as_view(), name='threaded_conversation'),
+    path('conversation/<int:conversation_id>/messages/', views.conversation_messages_view, name='conversation_messages'),
     path('reply/<int:parent_id>/', views.send_threaded_reply, name='send_threaded_reply'),
     
     # Message history

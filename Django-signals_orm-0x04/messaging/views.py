@@ -17,6 +17,10 @@ from django.db.models import Prefetch, Q, Count, Max, OuterRef, Subquery, Case, 
 from django.db.models import IntegerField, DateTimeField
 from django.core.paginator import Paginator
 from django.utils import timezone
+from django.views.decorators.cache import cache_page
+from django.utils.decorators import method_decorator
+from django.core.cache import cache
+from django.conf import settings
 from .models import Message, Notification, MessageHistory
 
 
@@ -146,11 +150,13 @@ def mark_messages_as_read(request):
 
 
 @login_required
+@cache_page(60)  # Cache for 60 seconds
 def unread_messages_api(request):
     """
     API endpoint to get unread messages using custom manager.
     
     Returns optimized unread message data using .only() fields.
+    This view is cached for 60 seconds to improve API performance.
     """
     user = request.user
     limit = int(request.GET.get('limit', 20))
@@ -241,11 +247,72 @@ def unread_inbox_view(request):
     return render(request, 'messaging/unread_inbox.html', context)
 
 
+@login_required
+@cache_page(60)  # Cache for 60 seconds
+def conversation_messages_view(request, conversation_id):
+    """
+    Function-based view to display messages in a specific conversation.
+    
+    This view demonstrates basic caching with cache_page decorator
+    and retrieves messages in a conversation thread with optimized queries.
+    """
+    try:
+        # Get the root message of the conversation
+        root_message = get_object_or_404(
+            Message.objects.select_related('sender', 'receiver'),
+            id=conversation_id
+        )
+        
+        # Verify user has access to this conversation
+        user = request.user
+        if not (root_message.sender == user or root_message.receiver == user):
+            from django.core.exceptions import PermissionDenied
+            raise PermissionDenied("You don't have permission to view this conversation.")
+        
+        # Get all messages in the conversation thread with optimized queries
+        conversation_messages = Message.objects.filter(
+            Q(id=conversation_id) | Q(parent_message_id=conversation_id)
+        ).select_related(
+            'sender', 'receiver', 'parent_message'
+        ).prefetch_related(
+            # Prefetch message history for edited messages
+            Prefetch(
+                'history',
+                queryset=MessageHistory.objects.select_related('edited_by').order_by('-version')[:3]
+            ),
+            # Prefetch notifications related to these messages
+            'notifications'
+        ).order_by('timestamp')
+        
+        # Build context with conversation data
+        context = {
+            'root_message': root_message,
+            'conversation_messages': conversation_messages,
+            'conversation_id': conversation_id,
+            'message_count': conversation_messages.count(),
+            'participants': [root_message.sender, root_message.receiver],
+            'user_can_reply': True,  # User has access so they can reply
+            'cache_info': {
+                'cached': True,
+                'cache_timeout': 60,
+                'cache_key_prefix': 'conversation_messages'
+            }
+        }
+        
+        return render(request, 'messaging/conversation_messages.html', context)
+        
+    except Message.DoesNotExist:
+        messages.error(request, 'Conversation not found.')
+        return redirect('messaging:message_list')
+
+
+@method_decorator(cache_page(60), name='dispatch')  # Cache for 60 seconds
 class MessageListView(LoginRequiredMixin, ListView):
     """
     View to list messages for the current user with optimized queries.
     
     Uses select_related and prefetch_related to minimize database hits.
+    This view is cached for 60 seconds to improve performance.
     """
     model = Message
     template_name = 'messaging/message_list.html'
@@ -320,12 +387,13 @@ class SendMessageView(LoginRequiredMixin, CreateView):
         return context
 
 
+@method_decorator(cache_page(60), name='dispatch')  # Cache for 60 seconds
 class ThreadedConversationView(LoginRequiredMixin, DetailView):
     """
     View to display a complete threaded conversation with optimized queries.
     
     Uses recursive queries and advanced prefetching for efficient loading
-    of the entire conversation tree.
+    of the entire conversation tree. This view is cached for 60 seconds.
     """
     model = Message
     template_name = 'messaging/threaded_conversation.html'
