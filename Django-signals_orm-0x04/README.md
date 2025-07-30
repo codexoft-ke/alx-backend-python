@@ -174,11 +174,19 @@ python manage.py runserver
 1. **Access Django Admin**: Go to `http://127.0.0.1:8000/admin/`
 2. **Create Users**: Add test users through the admin interface
 3. **Send Messages**: Create messages between users
-4. **Check Notifications**: Verify that notifications are automatically created
+4. **Edit Messages**: Update message content to see edit history
+5. **Check Notifications**: Verify that notifications are automatically created
+6. **View History**: Check MessageHistory entries in admin
 
 ### Running Tests
 ```bash
 python manage.py test messaging
+```
+
+### Testing Message Editing (NEW)
+```bash
+# Run the message editing test command
+python manage.py test_message_editing --clear
 ```
 
 ### Example Usage in Django Shell
@@ -187,7 +195,7 @@ python manage.py shell
 
 # Create users
 from django.contrib.auth.models import User
-from messaging.models import Message, Notification
+from messaging.models import Message, Notification, MessageHistory
 
 user1 = User.objects.create_user('sender', 'sender@test.com', 'password')
 user2 = User.objects.create_user('receiver', 'receiver@test.com', 'password')
@@ -199,7 +207,15 @@ message = Message.objects.create(
     content="Hello! This message will trigger a notification."
 )
 
-# Check that notification was created
+# Edit the message (this will create history and edit notification)
+message.content = "Hello! This is the EDITED message."
+message.save()
+
+# Check that history was created
+history_entries = MessageHistory.objects.filter(message=message)
+print(f"History entries: {history_entries.count()}")
+
+# Check notifications
 notifications = Notification.objects.filter(user=user2)
 print(f"Notifications created: {notifications.count()}")
 

@@ -8,6 +8,7 @@ from django.db.models.signals import post_save, post_delete, pre_save
 from django.dispatch import receiver
 from django.contrib.auth.models import User
 from django.utils import timezone
+from django.db import models
 from .models import Message, Notification, UserProfile, MessageHistory
 
 
@@ -33,11 +34,17 @@ def log_message_edit(sender, instance, **kwargs):
             
             # Check if the content has actually changed
             if old_message.content != instance.content:
+                # Get the next version number for this message
+                last_version = MessageHistory.objects.filter(message=instance).aggregate(
+                    max_version=models.Max('version')
+                )['max_version'] or 0
+                
                 # Store the old content in MessageHistory
-                MessageHistory.create_history_entry(
+                MessageHistory.objects.create(
                     message=instance,
                     old_content=old_message.content,
-                    edited_by=instance.sender  # Assuming sender is doing the edit
+                    edited_by=instance.sender,  # Assuming sender is doing the edit
+                    version=last_version + 1
                 )
                 
                 # Mark the message as edited
