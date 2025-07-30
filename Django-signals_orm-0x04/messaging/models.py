@@ -53,6 +53,18 @@ class Message(models.Model):
         blank=True,
         help_text="When the message was last edited"
     )
+    parent_message = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='replies',
+        help_text="The message this is a reply to (for threaded conversations)"
+    )
+    thread_level = models.PositiveIntegerField(
+        default=0,
+        help_text="The depth level in the conversation thread (0 for root messages)"
+    )
 
     class Meta:
         ordering = ['-timestamp']
@@ -72,6 +84,144 @@ class Message(models.Model):
         self.edited = True
         self.edited_at = timezone.now()
         self.save()
+
+    def is_reply(self):
+        """Check if this message is a reply to another message."""
+        return self.parent_message is not None
+
+    def is_root_message(self):
+        """Check if this message is a root message (not a reply)."""
+        return self.parent_message is None
+
+    def get_root_message(self):
+        """Get the root message of this conversation thread."""
+        if self.is_root_message():
+            return self
+        current = self
+        while current.parent_message:
+            current = current.parent_message
+        return current
+
+    def get_thread_participants(self):
+        """Get all users who have participated in this conversation thread."""
+        from django.db.models import Q
+        root = self.get_root_message()
+        
+        # Get all messages in this thread
+        thread_messages = Message.objects.filter(
+            Q(pk=root.pk) | Q(parent_message=root) | 
+            Q(parent_message__parent_message=root) |
+            Q(parent_message__parent_message__parent_message=root)  # Support up to 3 levels deep
+        )
+        
+        # Get unique participants
+        participants = User.objects.filter(
+            Q(sent_messages__in=thread_messages) | 
+            Q(received_messages__in=thread_messages)
+        ).distinct()
+        
+        return participants
+
+    def get_reply_count(self):
+        """Get the total number of replies to this message (including nested replies)."""
+        return self.get_all_replies().count()
+
+    def get_direct_replies(self):
+        """Get direct replies to this message (using optimized query)."""
+        return self.replies.select_related('sender', 'receiver').prefetch_related(
+            'replies__sender', 'replies__receiver'
+        ).order_by('timestamp')
+
+    def get_all_replies(self):
+        """Get all replies to this message recursively (optimized)."""
+        from django.db.models import Q
+        
+        # Build a recursive query to get all replies at any level
+        def get_reply_ids(message_id, collected_ids=None):
+            if collected_ids is None:
+                collected_ids = set()
+            
+            direct_reply_ids = list(
+                Message.objects.filter(parent_message_id=message_id)
+                .values_list('id', flat=True)
+            )
+            
+            for reply_id in direct_reply_ids:
+                if reply_id not in collected_ids:
+                    collected_ids.add(reply_id)
+                    get_reply_ids(reply_id, collected_ids)
+            
+            return collected_ids
+        
+        reply_ids = get_reply_ids(self.id)
+        return Message.objects.filter(id__in=reply_ids).select_related(
+            'sender', 'receiver', 'parent_message'
+        ).order_by('timestamp')
+
+    def get_conversation_thread(self):
+        """Get the entire conversation thread starting from the root message."""
+        root = self.get_root_message()
+        
+        # Get all messages in the thread
+        all_messages = [root] + list(root.get_all_replies())
+        
+        return all_messages
+
+    def save(self, *args, **kwargs):
+        """Override save to automatically set thread_level."""
+        if self.parent_message:
+            self.thread_level = self.parent_message.thread_level + 1
+        else:
+            self.thread_level = 0
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get_threaded_conversations(cls, user, limit=20):
+        """
+        Get threaded conversations for a user with optimized queries.
+        
+        Returns root messages with their reply counts and latest activity.
+        """
+        from django.db.models import Count, Max, Q, Prefetch
+        
+        # Get root messages where user is sender or receiver
+        root_messages = cls.objects.filter(
+            Q(sender=user) | Q(receiver=user),
+            parent_message__isnull=True
+        ).select_related('sender', 'receiver').annotate(
+            reply_count=Count('replies'),
+            latest_activity=Max('replies__timestamp')
+        ).prefetch_related(
+            Prefetch(
+                'replies',
+                queryset=cls.objects.select_related('sender', 'receiver').order_by('timestamp')
+            )
+        ).order_by('-timestamp')[:limit]
+        
+        return root_messages
+
+    @classmethod
+    def search_in_conversations(cls, user, query, limit=50):
+        """Search for messages in user's conversations with threading context."""
+        from django.db.models import Q
+        
+        matching_messages = cls.objects.filter(
+            Q(sender=user) | Q(receiver=user),
+            content__icontains=query
+        ).select_related('sender', 'receiver', 'parent_message').order_by('-timestamp')[:limit]
+        
+        # Group by conversation thread
+        conversations = {}
+        for message in matching_messages:
+            root = message.get_root_message()
+            if root.id not in conversations:
+                conversations[root.id] = {
+                    'root': root,
+                    'matching_messages': []
+                }
+            conversations[root.id]['matching_messages'].append(message)
+        
+        return list(conversations.values())
 
 
 class MessageHistory(models.Model):
