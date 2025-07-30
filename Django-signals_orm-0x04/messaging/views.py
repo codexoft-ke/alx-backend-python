@@ -1,5 +1,5 @@
 """
-Views for the messaging app.
+Views for the messaging app with advanced ORM optimization.
 """
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
@@ -13,21 +13,54 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_protect
 from django.contrib.auth.forms import AuthenticationForm
+from django.db.models import Prefetch, Q, Count, Max, OuterRef, Subquery, Case, When
+from django.db.models import IntegerField, DateTimeField
+from django.core.paginator import Paginator
+from django.utils import timezone
 from .models import Message, Notification, MessageHistory
 
 
 class MessageListView(LoginRequiredMixin, ListView):
-    """View to list messages for the current user."""
+    """
+    View to list messages for the current user with optimized queries.
+    
+    Uses select_related and prefetch_related to minimize database hits.
+    """
     model = Message
     template_name = 'messaging/message_list.html'
     context_object_name = 'messages'
     paginate_by = 20
 
     def get_queryset(self):
-        """Return messages for the current user."""
+        """
+        Return messages for the current user with optimized prefetching.
+        
+        Uses select_related for foreign keys and prefetch_related for
+        reverse relationships to minimize database queries.
+        """
         return Message.objects.filter(
-            receiver=self.request.user
-        ).select_related('sender')
+            Q(receiver=self.request.user) | Q(sender=self.request.user)
+        ).select_related(
+            'sender', 'receiver', 'parent_message'
+        ).prefetch_related(
+            # Prefetch replies with their senders for threaded conversations
+            Prefetch(
+                'replies',
+                queryset=Message.objects.select_related('sender', 'receiver').order_by('timestamp')
+            ),
+            # Prefetch message history
+            Prefetch(
+                'history',
+                queryset=MessageHistory.objects.select_related('edited_by').order_by('-version')
+            ),
+            # Prefetch notifications
+            'notifications'
+        ).annotate(
+            # Count replies for each message
+            reply_count=Count('replies'),
+            # Get latest reply timestamp
+            latest_reply=Max('replies__timestamp')
+        ).order_by('-timestamp')
 
 
 class SendMessageView(LoginRequiredMixin, CreateView):
