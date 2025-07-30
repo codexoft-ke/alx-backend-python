@@ -4,11 +4,68 @@ Django signals for the messaging app.
 This module contains signal handlers that automatically create notifications
 when certain events occur, such as when a new message is created.
 """
-from django.db.models.signals import post_save, post_delete
+from django.db.models.signals import post_save, post_delete, pre_save
 from django.dispatch import receiver
 from django.contrib.auth.models import User
 from django.utils import timezone
-from .models import Message, Notification, UserProfile
+from .models import Message, Notification, UserProfile, MessageHistory
+
+
+@receiver(pre_save, sender=Message)
+def log_message_edit(sender, instance, **kwargs):
+    """
+    Signal handler that logs message edits by storing the old content in MessageHistory.
+    
+    This function is triggered before a Message instance is saved.
+    If it's an existing message being updated with different content,
+    it creates a MessageHistory entry with the old content.
+    
+    Args:
+        sender: The model class (Message)
+        instance: The actual Message instance being saved
+        **kwargs: Additional keyword arguments
+    """
+    # Only proceed if this is an update (not a new message)
+    if instance.pk:
+        try:
+            # Get the existing message from database
+            old_message = Message.objects.get(pk=instance.pk)
+            
+            # Check if the content has actually changed
+            if old_message.content != instance.content:
+                # Store the old content in MessageHistory
+                MessageHistory.create_history_entry(
+                    message=instance,
+                    old_content=old_message.content,
+                    edited_by=instance.sender  # Assuming sender is doing the edit
+                )
+                
+                # Mark the message as edited
+                instance.edited = True
+                instance.edited_at = timezone.now()
+                
+                print(f"✅ Message edit logged: Message #{instance.pk} content changed")
+                
+                # Create notification for the receiver about the edit
+                if hasattr(instance, 'receiver'):
+                    notification_title = f"Message edited by {instance.sender.username}"
+                    notification_description = f"A message from {instance.sender.username} was edited"
+                    
+                    Notification.objects.create(
+                        user=instance.receiver,
+                        message=instance,
+                        notification_type='message_edited',
+                        title=notification_title,
+                        description=notification_description
+                    )
+                    
+                    print(f"✅ Edit notification created for {instance.receiver.username}")
+                
+        except Message.DoesNotExist:
+            # This shouldn't happen, but handle gracefully
+            pass
+        except Exception as e:
+            print(f"❌ Error in message edit logging: {e}")
 
 
 @receiver(post_save, sender=Message)

@@ -44,6 +44,15 @@ class Message(models.Model):
         default=False,
         help_text="Whether the message has been read by the receiver"
     )
+    edited = models.BooleanField(
+        default=False,
+        help_text="Whether the message has been edited"
+    )
+    edited_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the message was last edited"
+    )
 
     class Meta:
         ordering = ['-timestamp']
@@ -57,6 +66,86 @@ class Message(models.Model):
         """Mark the message as read."""
         self.is_read = True
         self.save()
+
+    def mark_as_edited(self):
+        """Mark the message as edited and update the edited timestamp."""
+        self.edited = True
+        self.edited_at = timezone.now()
+        self.save()
+
+
+class MessageHistory(models.Model):
+    """
+    Model to store the history of message edits.
+    
+    This model keeps track of all previous versions of a message
+    whenever it gets edited, allowing users to view edit history.
+    
+    Attributes:
+        message (ForeignKey): The message this history entry belongs to
+        old_content (TextField): The previous content before the edit
+        edited_by (ForeignKey): The user who made the edit
+        edited_at (DateTimeField): When the edit was made
+        version (PositiveIntegerField): Version number of this edit
+    """
+    message = models.ForeignKey(
+        'Message',
+        on_delete=models.CASCADE,
+        related_name='history',
+        help_text="The message this history entry belongs to"
+    )
+    old_content = models.TextField(
+        max_length=1000,
+        help_text="The previous content before the edit"
+    )
+    edited_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='message_edits',
+        help_text="The user who made the edit"
+    )
+    edited_at = models.DateTimeField(
+        default=timezone.now,
+        help_text="When the edit was made"
+    )
+    version = models.PositiveIntegerField(
+        default=1,
+        help_text="Version number of this edit"
+    )
+
+    class Meta:
+        ordering = ['-edited_at']
+        verbose_name = "Message History"
+        verbose_name_plural = "Message Histories"
+        unique_together = ['message', 'version']
+
+    def __str__(self):
+        return f"Edit #{self.version} of message #{self.message.id} by {self.edited_by.username}"
+
+    @classmethod
+    def create_history_entry(cls, message, old_content, edited_by):
+        """
+        Create a new history entry for a message edit.
+        
+        Args:
+            message: The message being edited
+            old_content: The content before the edit
+            edited_by: The user making the edit
+        
+        Returns:
+            MessageHistory: The created history entry
+        """
+        # Get the next version number
+        last_version = cls.objects.filter(message=message).aggregate(
+            max_version=models.Max('version')
+        )['max_version'] or 0
+        
+        return cls.objects.create(
+            message=message,
+            old_content=old_content,
+            edited_by=edited_by,
+            version=last_version + 1
+        )
 
 
 class Notification(models.Model):
@@ -73,6 +162,7 @@ class Notification(models.Model):
     NOTIFICATION_TYPES = [
         ('new_message', 'New Message'),
         ('message_read', 'Message Read'),
+        ('message_edited', 'Message Edited'),
         ('user_online', 'User Online'),
         ('user_offline', 'User Offline'),
     ]

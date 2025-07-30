@@ -18,21 +18,33 @@ The project demonstrates the implementation of Django signals to automatically n
 ### 🔔 Automatic Notifications
 - Automatically creates notifications when new messages are received
 - Generates read receipts when messages are marked as read
+- **NEW**: Creates notifications when messages are edited
 - Tracks user online/offline status changes
 
 ### 📧 Message System
 - Users can send messages to each other
 - Messages have read/unread status
+- **NEW**: Messages can be edited with full history tracking
+- **NEW**: Edit status and timestamps are tracked
 - Timestamps for all messages
 - Admin interface for message management
 
-### 👤 User Management
+### � Message History Tracking
+- **NEW**: Automatic logging of all message edits using Django signals
+- **NEW**: Stores complete edit history with version numbers
+- **NEW**: Tracks who made each edit and when
+- **NEW**: Admin interface for viewing edit history
+- **NEW**: API endpoints for accessing message history
+
+### �👤 User Management
 - Extended user profiles with online status
 - User profile automatically created when new users register
 - Last seen timestamps
 
 ### 🛠 Admin Interface
 - Comprehensive Django admin interface
+- **NEW**: Message edit status indicators and history links
+- **NEW**: MessageHistory admin with full edit tracking
 - Bulk actions for messages and notifications
 - Filtering and searching capabilities
 - Visual indicators for read/unread status
@@ -47,6 +59,18 @@ class Message(models.Model):
     content = models.TextField(max_length=1000)
     timestamp = models.DateTimeField(default=timezone.now)
     is_read = models.BooleanField(default=False)
+    edited = models.BooleanField(default=False)  # NEW
+    edited_at = models.DateTimeField(null=True, blank=True)  # NEW
+```
+
+### MessageHistory Model (NEW)
+```python
+class MessageHistory(models.Model):
+    message = models.ForeignKey(Message, related_name='history')
+    old_content = models.TextField(max_length=1000)
+    edited_by = models.ForeignKey(User, related_name='message_edits')
+    edited_at = models.DateTimeField(default=timezone.now)
+    version = models.PositiveIntegerField(default=1)
 ```
 
 ### Notification Model
@@ -55,6 +79,7 @@ class Notification(models.Model):
     user = models.ForeignKey(User, related_name='notifications')
     message = models.ForeignKey(Message, related_name='notifications')
     notification_type = models.CharField(max_length=20, choices=NOTIFICATION_TYPES)
+    # Types include: 'new_message', 'message_read', 'message_edited' (NEW), etc.
     title = models.CharField(max_length=200)
     description = models.TextField(max_length=500)
     is_read = models.BooleanField(default=False)
@@ -73,26 +98,45 @@ class UserProfile(models.Model):
 
 ### Signal Handlers
 
-1. **create_message_notification**: Creates a notification when a new message is sent
-2. **message_read_notification**: Creates a read receipt notification when a message is marked as read
-3. **create_user_profile**: Automatically creates a user profile when a new user is created
-4. **user_status_notification**: Creates notifications when users go online/offline
+1. **log_message_edit** (NEW): Logs message edits using pre_save signal
+2. **create_message_notification**: Creates a notification when a new message is sent
+3. **message_read_notification**: Creates a read receipt notification when a message is marked as read
+4. **create_user_profile**: Automatically creates a user profile when a new user is created
+5. **user_status_notification**: Creates notifications when users go online/offline
 
-### Example Signal Handler
+### Example Signal Handler (NEW)
 ```python
-@receiver(post_save, sender=Message)
-def create_message_notification(sender, instance, created, **kwargs):
-    if created:
-        notification_title = f"New message from {instance.sender.username}"
-        notification_description = f"You have received a new message: {instance.content[:50]}..."
-        
-        Notification.objects.create(
-            user=instance.receiver,
-            message=instance,
-            notification_type='new_message',
-            title=notification_title,
-            description=notification_description
-        )
+@receiver(pre_save, sender=Message)
+def log_message_edit(sender, instance, **kwargs):
+    # Only proceed if this is an update (not a new message)
+    if instance.pk:
+        try:
+            # Get the existing message from database
+            old_message = Message.objects.get(pk=instance.pk)
+            
+            # Check if the content has actually changed
+            if old_message.content != instance.content:
+                # Store the old content in MessageHistory
+                MessageHistory.create_history_entry(
+                    message=instance,
+                    old_content=old_message.content,
+                    edited_by=instance.sender
+                )
+                
+                # Mark the message as edited
+                instance.edited = True
+                instance.edited_at = timezone.now()
+                
+                # Create notification for the receiver about the edit
+                Notification.objects.create(
+                    user=instance.receiver,
+                    message=instance,
+                    notification_type='message_edited',
+                    title=f"Message edited by {instance.sender.username}",
+                    description=f"A message from {instance.sender.username} was edited"
+                )
+        except Message.DoesNotExist:
+            pass
 ```
 
 ## Installation and Setup

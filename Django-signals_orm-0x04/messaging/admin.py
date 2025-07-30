@@ -8,7 +8,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
-from .models import Message, Notification, UserProfile
+from .models import Message, Notification, UserProfile, MessageHistory
 
 
 @admin.register(Message)
@@ -26,11 +26,15 @@ class MessageAdmin(admin.ModelAdmin):
         'content_preview',
         'timestamp',
         'is_read_status',
+        'edit_status',
+        'history_count',
         'notification_count'
     ]
     list_filter = [
         'is_read',
+        'edited',
         'timestamp',
+        'edited_at',
         'sender__username',
         'receiver__username'
     ]
@@ -41,6 +45,8 @@ class MessageAdmin(admin.ModelAdmin):
     ]
     readonly_fields = [
         'timestamp',
+        'edited_at',
+        'history_count',
         'notification_count'
     ]
     date_hierarchy = 'timestamp'
@@ -77,6 +83,28 @@ class MessageAdmin(admin.ModelAdmin):
         )
     is_read_status.short_description = 'Status'
 
+    def edit_status(self, obj):
+        """Display edit status with colored indicator."""
+        if obj.edited:
+            return format_html(
+                '<span style="color: orange; font-weight: bold;">✏️ Edited</span>'
+            )
+        return format_html(
+            '<span style="color: gray;">📝 Original</span>'
+        )
+    edit_status.short_description = 'Edit Status'
+
+    def history_count(self, obj):
+        """Show the number of edit history entries for this message."""
+        count = obj.history.count()
+        if count > 0:
+            return format_html(
+                '<a href="/admin/messaging/messagehistory/?message__id={}">{} edit{}</a>',
+                obj.id, count, 's' if count != 1 else ''
+            )
+        return "No edits"
+    history_count.short_description = 'Edit History'
+
     def notification_count(self, obj):
         """Show the number of notifications generated for this message."""
         count = obj.notifications.count()
@@ -102,6 +130,69 @@ class MessageAdmin(admin.ModelAdmin):
             f'{updated} message{"s" if updated != 1 else ""} marked as unread.'
         )
     mark_as_unread.short_description = "Mark selected messages as unread"
+
+
+@admin.register(MessageHistory)
+class MessageHistoryAdmin(admin.ModelAdmin):
+    """
+    Admin configuration for the MessageHistory model.
+    
+    Provides an interface for viewing message edit history.
+    """
+    list_display = [
+        'id',
+        'message_link',
+        'version',
+        'old_content_preview',
+        'edited_by_link',
+        'edited_at'
+    ]
+    list_filter = [
+        'edited_at',
+        'version',
+        'edited_by__username'
+    ]
+    search_fields = [
+        'old_content',
+        'message__content',
+        'edited_by__username'
+    ]
+    readonly_fields = [
+        'message',
+        'old_content',
+        'edited_by',
+        'edited_at',
+        'version'
+    ]
+    ordering = ['-edited_at']
+    list_per_page = 25
+
+    def message_link(self, obj):
+        """Create a clickable link to the related message."""
+        url = reverse('admin:messaging_message_change', args=[obj.message.id])
+        return format_html('<a href="{}">Message #{}</a>', url, obj.message.id)
+    message_link.short_description = 'Message'
+
+    def edited_by_link(self, obj):
+        """Create a clickable link to the user who made the edit."""
+        url = reverse('admin:auth_user_change', args=[obj.edited_by.id])
+        return format_html('<a href="{}">{}</a>', url, obj.edited_by.username)
+    edited_by_link.short_description = 'Edited By'
+
+    def old_content_preview(self, obj):
+        """Show a truncated preview of the old content."""
+        if len(obj.old_content) > 50:
+            return f"{obj.old_content[:50]}..."
+        return obj.old_content
+    old_content_preview.short_description = 'Old Content Preview'
+
+    def has_add_permission(self, request):
+        """Disable adding MessageHistory entries manually."""
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        """Disable editing MessageHistory entries."""
+        return False
 
 
 @admin.register(Notification)
