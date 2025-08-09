@@ -38,4 +38,8 @@ python manage.py collectstatic --noinput --clear
 
 # Start the Django development server
 echo "Starting Django server..."
-exec gunicorn messaging_app.wsgi:application --bind 0.0.0.0:8000 --workers 3
+if [ "$DJANGO_ENV" = "development" ]; then
+    exec python3 manage.py runserver 0.0.0.0:8000
+else
+    exec gunicorn messaging_app.wsgi:application --bind 0.0.0.0:8000 --workers 3
+fi
