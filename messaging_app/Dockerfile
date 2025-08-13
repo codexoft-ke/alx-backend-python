@@ -1,6 +1,10 @@
 # Use Python 3.10 as base image
 FROM python:3.10
 
+# Build argument for version
+ARG VERSION=latest
+ENV APP_VERSION=$VERSION
+
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
