@@ -1,0 +1,46 @@
+# Commands to Set Up Kubernetes Ingress for Django Messaging App
+
+# 1. Enable Nginx Ingress Controller in Minikube
+minikube addons enable ingress
+
+# 2. Wait for Ingress Controller to be ready
+kubectl wait --namespace ingress-nginx \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller \
+  --timeout=120s
+
+# 3. Verify Ingress Controller is running
+kubectl get pods -n ingress-nginx
+
+# 4. Apply the Ingress configuration
+kubectl apply -f ingress.yaml
+
+# 5. Verify Ingress resource was created
+kubectl get ingress
+
+# 6. Get detailed information about the Ingress
+kubectl describe ingress django-messaging-ingress
+
+# 7. Get Minikube IP for local testing
+minikube ip
+
+# 8. Add domain entries to /etc/hosts for local testing (run on host machine)
+# echo "$(minikube ip) messaging-app.local" | sudo tee -a /etc/hosts
+# echo "$(minikube ip) api.messaging-app.local" | sudo tee -a /etc/hosts
+# echo "$(minikube ip) db.messaging-app.local" | sudo tee -a /etc/hosts
+
+# 9. Test the Ingress routing
+# curl http://messaging-app.local/admin/
+# curl http://api.messaging-app.local/
+
+# 10. Enable Ingress DNS addon for automatic domain resolution (optional)
+minikube addons enable ingress-dns
+
+# 11. Check all services are accessible through Ingress
+kubectl get services
+
+# 12. Monitor Ingress controller logs if needed
+kubectl logs -n ingress-nginx -l app.kubernetes.io/name=ingress-nginx
+
+# 13. Delete Ingress if needed (cleanup command)
+# kubectl delete ingress django-messaging-ingress mysql-ingress
