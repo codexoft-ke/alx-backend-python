@@ -1,0 +1,152 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: django-messaging-app
+  labels:
+    app: django-messaging-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: django-messaging-app
+  template:
+    metadata:
+      labels:
+        app: django-messaging-app
+    spec:
+      containers:
+      - name: django-app
+        image: messaging-app:latest
+        imagePullPolicy: Never  # Use local image built with Docker
+        ports:
+        - containerPort: 8000
+        env:
+        - name: DEBUG
+          value: "True"
+        - name: SECRET_KEY
+          value: "django-insecure-kwd+kk&a!yctj2qd+9!*z1@&96xr=_=zm3bo$n^vti9n%iy%51"
+        - name: ALLOWED_HOSTS
+          value: "localhost,127.0.0.1,0.0.0.0,*"
+        - name: DB_HOST
+          value: "mysql-service"
+        - name: DB_PORT
+          value: "3306"
+        - name: MYSQL_DATABASE
+          value: "messaging_app_db"
+        - name: MYSQL_USER
+          value: "messaging_user"
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: mysql-password
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /admin/
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /admin/
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: django-messaging-service
+  labels:
+    app: django-messaging-app
+spec:
+  type: ClusterIP
+  selector:
+    app: django-messaging-app
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-secret
+type: Opaque
+data:
+  mysql-password: bWVzc2FnaW5nX3Bhc3N3b3JkXzEyMw==  # messaging_password_123 in base64
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-database
+  labels:
+    app: mysql-database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql-database
+  template:
+    metadata:
+      labels:
+        app: mysql-database
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:8.0
+        ports:
+        - containerPort: 3306
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: "root_password_123"
+        - name: MYSQL_DATABASE
+          value: "messaging_app_db"
+        - name: MYSQL_USER
+          value: "messaging_user"
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: mysql-password
+        volumeMounts:
+        - name: mysql-storage
+          mountPath: /var/lib/mysql
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: mysql-storage
+        emptyDir: {}
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-service
+  labels:
+    app: mysql-database
+spec:
+  type: ClusterIP
+  selector:
+    app: mysql-database
+  ports:
+  - protocol: TCP
+    port: 3306
+    targetPort: 3306

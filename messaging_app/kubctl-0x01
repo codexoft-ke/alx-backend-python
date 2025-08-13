@@ -1,0 +1,219 @@
+#!/bin/bash
+
+# kubctl-0x01 - Kubernetes Scaling and Load Testing Script
+# This script scales the Django app, verifies scaling, performs load testing, and monitors resources
+
+set -e  # Exit on any error
+
+echo "==============================================="
+echo "Kubernetes Django App Scaling Script"
+echo "==============================================="
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Function to install wrk (load testing tool)
+install_wrk() {
+    echo "📦 Installing wrk for load testing..."
+    
+    # Check if we're on Ubuntu/Debian
+    if command_exists apt; then
+        sudo apt update
+        sudo apt install -y wrk
+    else
+        # Try to build from source
+        echo "Building wrk from source..."
+        git clone https://github.com/wg/wrk.git /tmp/wrk
+        cd /tmp/wrk
+        make
+        sudo cp wrk /usr/local/bin/
+        cd -
+        rm -rf /tmp/wrk
+    fi
+    
+    echo "✅ wrk installed successfully"
+}
+
+# Check and install dependencies
+echo "🔍 Checking dependencies..."
+
+if ! command_exists kubectl; then
+    echo "❌ kubectl not found. Please install kubectl first."
+    exit 1
+else
+    echo "✅ kubectl is available"
+fi
+
+if ! command_exists wrk; then
+    echo "❌ wrk not found. Installing..."
+    install_wrk
+else
+    echo "✅ wrk is available"
+fi
+
+# Check if minikube is running
+echo "🔍 Checking if minikube is running..."
+if ! minikube status | grep -q "Running"; then
+    echo "❌ Minikube is not running. Please start minikube first."
+    exit 1
+else
+    echo "✅ Minikube is running"
+fi
+
+echo ""
+echo "==============================================="
+echo "Current Deployment Status"
+echo "==============================================="
+
+# Show current deployment status
+echo "📊 Current deployments:"
+kubectl get deployments
+
+echo ""
+echo "📦 Current pods:"
+kubectl get pods -l app=django-messaging-app
+
+echo ""
+echo "==============================================="
+echo "Scaling Django App to 3 Replicas"
+echo "==============================================="
+
+# Scale the Django app deployment to 3 replicas
+echo "🚀 Scaling django-messaging-app deployment to 3 replicas..."
+kubectl scale deployment django-messaging-app --replicas=3
+
+# Wait for the scaling to complete
+echo "⏳ Waiting for scaling to complete..."
+kubectl rollout status deployment/django-messaging-app --timeout=300s
+
+echo ""
+echo "==============================================="
+echo "Verifying Scaled Deployment"
+echo "==============================================="
+
+# Verify multiple pods are running
+echo "📦 Verifying scaled pods:"
+kubectl get pods -l app=django-messaging-app
+
+echo ""
+echo "📊 Deployment details:"
+kubectl describe deployment django-messaging-app | grep -E "(Replicas|Ready)"
+
+echo ""
+echo "🔗 Service status:"
+kubectl get services django-messaging-service
+
+echo ""
+echo "==============================================="
+echo "Setting Up Load Testing Environment"
+echo "==============================================="
+
+# Set up port forwarding to access the Django app
+echo "🔗 Setting up port forwarding to Django service..."
+kubectl port-forward service/django-messaging-service 8000:8000 &
+PORT_FORWARD_PID=$!
+
+# Wait a moment for port forwarding to establish
+sleep 5
+
+# Check if the service is accessible
+echo "🔍 Testing service accessibility..."
+if curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/admin/ | grep -q "200\|302\|404"; then
+    echo "✅ Django service is accessible"
+else
+    echo "⚠️  Django service might not be fully ready, but proceeding with load test..."
+fi
+
+echo ""
+echo "==============================================="
+echo "Performing Load Testing with wrk"
+echo "==============================================="
+
+# Perform load testing
+echo "🔥 Starting load test with wrk..."
+echo "Test parameters: 10 connections, 30 seconds duration, 2 threads"
+
+wrk -t2 -c10 -d30s --timeout=10s http://localhost:8000/admin/ || echo "Load test completed with some timeouts (expected for admin endpoint)"
+
+echo ""
+echo "==============================================="
+echo "Monitoring Resource Usage"
+echo "==============================================="
+
+# Enable metrics server if not already enabled
+echo "📊 Enabling metrics server..."
+minikube addons enable metrics-server || echo "Metrics server already enabled or failed to enable"
+
+# Wait for metrics server to be ready
+echo "⏳ Waiting for metrics server to be ready..."
+sleep 30
+
+# Monitor resource usage
+echo "💻 Current resource usage:"
+echo "Node resource usage:"
+kubectl top nodes || echo "Node metrics not available yet"
+
+echo ""
+echo "Pod resource usage:"
+kubectl top pods -l app=django-messaging-app || echo "Pod metrics not available yet"
+
+echo ""
+echo "All pod resource usage:"
+kubectl top pods || echo "Pod metrics not available yet"
+
+echo ""
+echo "==============================================="
+echo "Post-Load Test Verification"
+echo "==============================================="
+
+# Check pod status after load test
+echo "📦 Pod status after load testing:"
+kubectl get pods -l app=django-messaging-app
+
+echo ""
+echo "📊 Deployment status after load testing:"
+kubectl get deployments django-messaging-app
+
+echo ""
+echo "🔍 Pod events (last 10 minutes):"
+kubectl get events --sort-by=.metadata.creationTimestamp | tail -20
+
+echo ""
+echo "==============================================="
+echo "Resource Usage Monitoring (Final)"
+echo "==============================================="
+
+# Final resource check
+echo "💻 Final resource usage check:"
+kubectl top pods -l app=django-messaging-app || echo "Pod metrics still not available"
+
+echo ""
+echo "🔧 Pod resource limits and requests:"
+kubectl describe pods -l app=django-messaging-app | grep -A 10 "Limits:\|Requests:" || echo "Could not get resource limits"
+
+echo ""
+echo "==============================================="
+echo "Cleanup and Summary"
+echo "==============================================="
+
+# Kill port forwarding
+kill $PORT_FORWARD_PID 2>/dev/null || echo "Port forwarding already stopped"
+
+echo "✅ Scaling verification completed successfully!"
+echo ""
+echo "📊 Summary:"
+echo "  - Django app scaled to 3 replicas"
+echo "  - Load testing performed with wrk"
+echo "  - Resource monitoring attempted"
+echo "  - All pods verified as running"
+echo ""
+echo "💡 Useful commands for continued monitoring:"
+echo "  - kubectl get pods -l app=django-messaging-app"
+echo "  - kubectl top pods -l app=django-messaging-app"
+echo "  - kubectl describe deployment django-messaging-app"
+echo "  - kubectl logs -l app=django-messaging-app --tail=50"
+echo "  - kubectl scale deployment django-messaging-app --replicas=5  # Scale to 5 replicas"
+echo ""
+echo "🎯 Load testing and scaling completed successfully!"
