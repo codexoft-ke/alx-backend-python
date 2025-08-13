@@ -1,0 +1,157 @@
+#!/bin/bash
+
+# kurbeScript - Kubernetes Setup and Verification Script
+# This script sets up a local Kubernetes cluster using minikube
+
+set -e  # Exit on any error
+
+echo "==============================================="
+echo "Kubernetes Local Cluster Setup Script"
+echo "==============================================="
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Function to install minikube
+install_minikube() {
+    echo "Installing minikube..."
+    
+    # Check the architecture
+    ARCH=$(uname -m)
+    case $ARCH in
+        x86_64) ARCH="amd64" ;;
+        arm64|aarch64) ARCH="arm64" ;;
+        *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+    esac
+    
+    # Download and install minikube
+    curl -Lo minikube "https://storage.googleapis.com/minikube/releases/latest/minikube-linux-$ARCH"
+    chmod +x minikube
+    sudo mv minikube /usr/local/bin/
+    
+    echo "✅ Minikube installed successfully"
+}
+
+# Function to install kubectl
+install_kubectl() {
+    echo "Installing kubectl..."
+    
+    # Download the latest stable version
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    chmod +x kubectl
+    sudo mv kubectl /usr/local/bin/
+    
+    echo "✅ kubectl installed successfully"
+}
+
+# Check and install dependencies
+echo "🔍 Checking dependencies..."
+
+if ! command_exists kubectl; then
+    echo "❌ kubectl not found. Installing..."
+    install_kubectl
+else
+    echo "✅ kubectl is already installed"
+    kubectl version --client
+fi
+
+if ! command_exists minikube; then
+    echo "❌ minikube not found. Installing..."
+    install_minikube
+else
+    echo "✅ minikube is already installed"
+    minikube version
+fi
+
+# Check if Docker is installed (required for minikube)
+if ! command_exists docker; then
+    echo "❌ Docker not found. Please install Docker first."
+    exit 1
+else
+    echo "✅ Docker is available"
+fi
+
+echo ""
+echo "==============================================="
+echo "Starting Kubernetes Cluster"
+echo "==============================================="
+
+# Start minikube cluster
+echo "🚀 Starting minikube cluster..."
+minikube start --driver=docker
+
+# Wait a moment for the cluster to fully initialize
+echo "⏳ Waiting for cluster to be ready..."
+sleep 10
+
+echo ""
+echo "==============================================="
+echo "Verifying Cluster Status"
+echo "==============================================="
+
+# Verify cluster is running
+echo "🔍 Checking cluster info..."
+kubectl cluster-info
+
+echo ""
+echo "🔍 Checking cluster status..."
+kubectl get nodes
+
+echo ""
+echo "🔍 Checking system pods..."
+kubectl get pods --all-namespaces
+
+echo ""
+echo "==============================================="
+echo "Retrieving Available Pods"
+echo "==============================================="
+
+# Get pods in default namespace
+echo "📋 Pods in default namespace:"
+kubectl get pods
+
+# Get pods in all namespaces
+echo ""
+echo "📋 All pods across all namespaces:"
+kubectl get pods --all-namespaces
+
+echo ""
+echo "==============================================="
+echo "Additional Cluster Information"
+echo "==============================================="
+
+# Display additional useful information
+echo "🔍 Kubernetes version:"
+kubectl version
+
+echo ""
+echo "🔍 Cluster context:"
+kubectl config current-context
+
+echo ""
+echo "🔍 Available namespaces:"
+kubectl get namespaces
+
+echo ""
+echo "🔍 Available services:"
+kubectl get services --all-namespaces
+
+echo ""
+echo "==============================================="
+echo "Cluster Setup Complete!"
+echo "==============================================="
+echo "✅ Minikube cluster is running"
+echo "✅ kubectl is configured"
+echo "✅ Cluster verification completed"
+echo ""
+echo "Useful commands:"
+echo "  - minikube status        # Check minikube status"
+echo "  - minikube dashboard     # Open Kubernetes dashboard"
+echo "  - minikube stop          # Stop the cluster"
+echo "  - minikube delete        # Delete the cluster"
+echo "  - kubectl get pods       # List pods"
+echo "  - kubectl get services   # List services"
+echo ""
+echo "To access the Kubernetes dashboard, run: minikube dashboard"
