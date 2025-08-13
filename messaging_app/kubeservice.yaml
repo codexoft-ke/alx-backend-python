@@ -1,0 +1,114 @@
+# Blue-Green Deployment Services Configuration
+# This file contains services for blue-green deployment strategy
+
+---
+# Service pointing to BLUE version (initial deployment)
+apiVersion: v1
+kind: Service
+metadata:
+  name: django-messaging-service-blue
+  labels:
+    app: django-messaging-app
+    version: blue
+spec:
+  type: ClusterIP
+  selector:
+    app: django-messaging-app
+    version: blue
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000
+
+---
+# Service pointing to GREEN version (new deployment)
+apiVersion: v1
+kind: Service
+metadata:
+  name: django-messaging-service-green
+  labels:
+    app: django-messaging-app
+    version: green
+spec:
+  type: ClusterIP
+  selector:
+    app: django-messaging-app
+    version: green
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000
+
+---
+# Main production service - initially points to BLUE
+# This will be switched to point to GREEN after validation
+apiVersion: v1
+kind: Service
+metadata:
+  name: django-messaging-service
+  labels:
+    app: django-messaging-app
+spec:
+  type: ClusterIP
+  selector:
+    app: django-messaging-app
+    version: blue  # Initially points to blue version
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000
+
+---
+# Canary Service for gradual traffic switching (optional)
+apiVersion: v1
+kind: Service
+metadata:
+  name: django-messaging-service-canary
+  labels:
+    app: django-messaging-app
+spec:
+  type: ClusterIP
+  selector:
+    app: django-messaging-app
+    # No version selector - will route to both blue and green
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000
+
+---
+# LoadBalancer service for external access during testing
+apiVersion: v1
+kind: Service
+metadata:
+  name: django-messaging-service-lb
+  labels:
+    app: django-messaging-app
+spec:
+  type: LoadBalancer
+  selector:
+    app: django-messaging-app
+    version: blue  # Change this to switch external traffic
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8000
+    nodePort: 30000
+
+---
+# MySQL Service (shared between blue and green)
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-service
+  labels:
+    app: mysql-database
+spec:
+  type: ClusterIP
+  selector:
+    app: mysql-database
+    # No version selector - shared database
+  ports:
+  - protocol: TCP
+    port: 3306
+    targetPort: 3306
