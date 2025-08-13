@@ -1,0 +1,237 @@
+#!/bin/bash
+
+# kubctl-0x03 - Rolling Update Script for Django Messaging App
+# This script performs rolling updates with zero downtime and monitors the process
+
+set -e  # Exit on any error
+
+echo "==============================================="
+echo "Kubernetes Rolling Update Script"
+echo "==============================================="
+
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Function to test app availability
+test_app_availability() {
+    local url=$1
+    local response_code=$(curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo "000")
+    if [[ "$response_code" == "200" || "$response_code" == "302" || "$response_code" == "404" ]]; then
+        return 0  # App is responding
+    else
+        return 1  # App is not responding
+    fi
+}
+
+# Function to monitor app continuously during update
+monitor_app_availability() {
+    local url=$1
+    local duration=$2
+    local interval=2
+    local successful_requests=0
+    local failed_requests=0
+    local total_requests=0
+    
+    echo "🔍 Monitoring app availability during rolling update..."
+    echo "URL: $url"
+    echo "Duration: ${duration}s, Interval: ${interval}s"
+    echo "Starting continuous availability testing..."
+    
+    local end_time=$(($(date +%s) + duration))
+    
+    while [ $(date +%s) -lt $end_time ]; do
+        total_requests=$((total_requests + 1))
+        
+        if test_app_availability "$url"; then
+            successful_requests=$((successful_requests + 1))
+            echo "✅ Request $total_requests: SUCCESS ($(date '+%H:%M:%S'))"
+        else
+            failed_requests=$((failed_requests + 1))
+            echo "❌ Request $total_requests: FAILED ($(date '+%H:%M:%S'))"
+        fi
+        
+        sleep $interval
+    done
+    
+    echo ""
+    echo "📊 Availability Test Results:"
+    echo "  Total Requests: $total_requests"
+    echo "  Successful: $successful_requests"
+    echo "  Failed: $failed_requests"
+    echo "  Success Rate: $(( (successful_requests * 100) / total_requests ))%"
+    
+    if [ $failed_requests -eq 0 ]; then
+        echo "🎉 ZERO DOWNTIME ACHIEVED!"
+    else
+        echo "⚠️  Some downtime detected during update"
+    fi
+}
+
+# Check prerequisites
+echo "🔍 Checking prerequisites..."
+
+if ! command_exists kubectl; then
+    echo "❌ kubectl not found. Please install kubectl first."
+    exit 1
+fi
+
+if ! command_exists curl; then
+    echo "❌ curl not found. Please install curl first."
+    exit 1
+fi
+
+if ! kubectl cluster-info &> /dev/null; then
+    echo "❌ Kubernetes cluster not accessible. Please start minikube first."
+    exit 1
+fi
+
+echo "✅ Prerequisites checked"
+
+echo ""
+echo "==============================================="
+echo "1. Pre-Update Status Check"
+echo "==============================================="
+
+echo "📊 Current deployment status:"
+kubectl get deployment django-messaging-app -o wide || echo "Deployment not found - will create new one"
+
+echo ""
+echo "📦 Current pods:"
+kubectl get pods -l app=django-messaging-app -o wide
+
+echo ""
+echo "🔗 Current services:"
+kubectl get services -l app=django-messaging-app
+
+echo ""
+echo "==============================================="
+echo "2. Building New Docker Image (v2.0)"
+echo "==============================================="
+
+# Configure Docker to use minikube's Docker daemon
+echo "🐳 Configuring Docker to use minikube's Docker daemon..."
+eval $(minikube docker-env)
+
+# Build version 2.0 of the image
+echo "🔨 Building messaging-app:2.0..."
+cd /workspaces/alx-backend-python/messaging_app
+docker build -t messaging-app:2.0 . --build-arg VERSION=2.0
+
+echo "✅ Docker image messaging-app:2.0 built successfully"
+
+echo ""
+echo "==============================================="
+echo "3. Setting Up Port Forwarding for Testing"
+echo "==============================================="
+
+# Set up port forwarding for continuous testing
+echo "🔌 Setting up port forwarding for testing..."
+kubectl port-forward service/django-messaging-service 8080:8000 &
+PORT_FORWARD_PID=$!
+
+# Wait for port forwarding to be established
+sleep 5
+
+TEST_URL="http://localhost:8080/admin/"
+echo "✅ Port forwarding established on port 8080"
+echo "Test URL: $TEST_URL"
+
+# Test initial connectivity
+if test_app_availability "$TEST_URL"; then
+    echo "✅ App is initially accessible"
+else
+    echo "⚠️ App is not initially accessible, proceeding anyway..."
+fi
+
+echo ""
+echo "==============================================="
+echo "4. Applying Rolling Update"
+echo "==============================================="
+
+# Start monitoring in background
+echo "🚀 Starting continuous availability monitoring..."
+monitor_app_availability "$TEST_URL" 120 &
+MONITOR_PID=$!
+
+# Apply the updated deployment
+echo "📝 Applying blue_deployment.yaml with rolling update strategy..."
+kubectl apply -f blue_deployment.yaml
+
+echo "⏳ Waiting for rollout to start..."
+sleep 5
+
+echo ""
+echo "==============================================="
+echo "5. Monitoring Rollout Progress"
+echo "==============================================="
+
+# Monitor the rollout status
+echo "📊 Monitoring rollout status..."
+kubectl rollout status deployment/django-messaging-app --timeout=300s
+
+echo "✅ Rollout completed successfully"
+
+# Wait for monitoring to complete
+wait $MONITOR_PID
+
+# Clean up port forwarding
+echo ""
+echo "🧹 Cleaning up port forwarding..."
+kill $PORT_FORWARD_PID 2>/dev/null || echo "Port forwarding already terminated"
+
+echo ""
+echo "==============================================="
+echo "6. Post-Update Verification"
+echo "==============================================="
+
+echo "📊 Final deployment status:"
+kubectl get deployment django-messaging-app -o wide
+
+echo ""
+echo "📦 Current pods after update:"
+kubectl get pods -l app=django-messaging-app -o wide
+
+echo ""
+echo "🏷️ Pod images and versions:"
+kubectl get pods -l app=django-messaging-app -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}'
+
+echo ""
+echo "📋 Rollout history:"
+kubectl rollout history deployment/django-messaging-app
+
+echo ""
+echo "==============================================="
+echo "7. Final Health Check"
+echo "==============================================="
+
+# Final health check
+echo "🔍 Performing final health check..."
+kubectl port-forward service/django-messaging-service 8081:8000 &
+HEALTH_PID=$!
+sleep 3
+
+if test_app_availability "http://localhost:8081/admin/"; then
+    echo "✅ App is healthy after rolling update"
+else
+    echo "❌ App health check failed"
+fi
+
+kill $HEALTH_PID 2>/dev/null || echo "Health check port forwarding terminated"
+
+echo ""
+echo "==============================================="
+echo "Rolling Update Complete!"
+echo "==============================================="
+echo "✅ Docker image updated to messaging-app:2.0"
+echo "✅ Rolling update applied successfully"
+echo "✅ Zero-downtime deployment monitored"
+echo "✅ Pod verification completed"
+echo ""
+echo "🔧 Useful commands for monitoring:"
+echo "  - kubectl get pods -l app=django-messaging-app        # Check current pods"
+echo "  - kubectl rollout status deployment/django-messaging-app  # Check rollout status"
+echo "  - kubectl rollout history deployment/django-messaging-app # View rollout history"
+echo "  - kubectl rollout undo deployment/django-messaging-app    # Rollback if needed"
+echo "  - kubectl logs -l app=django-messaging-app --tail=50     # Check application logs"
