@@ -9,7 +9,7 @@ echo "🔍 GitHub Actions Workflow Validation"
 echo "======================================"
 
 # Check if workflow file exists
-WORKFLOW_FILE="messaging_app/.github/workflows/ci.yml"
+WORKFLOW_FILE="messaging_app/messaging_app/.github/workflows/ci.yml"
 if [ -f "$WORKFLOW_FILE" ]; then
     echo "✅ Workflow file exists: $WORKFLOW_FILE"
 else
