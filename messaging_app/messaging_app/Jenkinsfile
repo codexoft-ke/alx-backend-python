@@ -5,6 +5,9 @@ pipeline {
         DJANGO_SETTINGS_MODULE = 'messaging_app.settings'
         PYTHONPATH = '.'
         DATABASE_URL = 'sqlite:///test.db'
+        DOCKER_HUB_REPO = 'your-dockerhub-username/messaging-app'
+        DOCKER_IMAGE_TAG = "${BUILD_NUMBER}"
+        DOCKER_LATEST_TAG = 'latest'
     }
     
     stages {
@@ -111,11 +114,56 @@ pipeline {
                 }
             }
         }
+        
+        stage('Build Docker Image') {
+            steps {
+                echo 'Building Docker image...'
+                script {
+                    // Build Docker image with build number as tag
+                    sh """
+                        cd messaging_app
+                        docker build -t ${DOCKER_HUB_REPO}:${DOCKER_IMAGE_TAG} .
+                        docker build -t ${DOCKER_HUB_REPO}:${DOCKER_LATEST_TAG} .
+                        echo "Docker image built successfully"
+                    """
+                }
+            }
+        }
+        
+        stage('Push Docker Image') {
+            steps {
+                echo 'Pushing Docker image to Docker Hub...'
+                script {
+                    // Login to Docker Hub and push image
+                    withCredentials([usernamePassword(
+                        credentialsId: 'docker-hub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )]) {
+                        sh """
+                            echo \$DOCKER_PASSWORD | docker login -u \$DOCKER_USERNAME --password-stdin
+                            docker push ${DOCKER_HUB_REPO}:${DOCKER_IMAGE_TAG}
+                            docker push ${DOCKER_HUB_REPO}:${DOCKER_LATEST_TAG}
+                            echo "Docker image pushed successfully"
+                        """
+                    }
+                }
+            }
+        }
     }
     
     post {
         always {
             echo 'Pipeline completed - cleaning up...'
+            
+            // Clean up Docker images to save space
+            script {
+                sh """
+                    docker rmi ${DOCKER_HUB_REPO}:${DOCKER_IMAGE_TAG} || true
+                    docker rmi ${DOCKER_HUB_REPO}:${DOCKER_LATEST_TAG} || true
+                    docker system prune -f || true
+                """
+            }
             
             // Archive test results and reports
             script {
@@ -160,6 +208,8 @@ pipeline {
         success {
             echo '✅ Pipeline completed successfully!'
             echo 'All tests passed and reports generated.'
+            echo "🐳 Docker image pushed: ${DOCKER_HUB_REPO}:${DOCKER_IMAGE_TAG}"
+            echo "🐳 Docker image also available as: ${DOCKER_HUB_REPO}:${DOCKER_LATEST_TAG}"
         }
         
         failure {

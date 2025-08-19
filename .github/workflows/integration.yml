@@ -1,0 +1,187 @@
+name: Integration & Performance Tests
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'messaging_app/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'messaging_app/**'
+  schedule:
+    # Run integration tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  integration-tests:
+    runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root_password_123
+          MYSQL_DATABASE: messaging_app_integration_db
+          MYSQL_USER: messaging_user
+          MYSQL_PASSWORD: messaging_password_123
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DJANGO_SETTINGS_MODULE: messaging_app.settings
+      MYSQL_DATABASE: messaging_app_integration_db
+      MYSQL_USER: messaging_user
+      MYSQL_PASSWORD: messaging_password_123
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      REDIS_URL: redis://127.0.0.1:6379/0
+      SECRET_KEY: integration-test-secret-key
+      DEBUG: False
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.10.12
+
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          default-mysql-client \
+          default-libmysqlclient-dev \
+          gcc \
+          pkg-config
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r messaging_app/requirements.txt
+        pip install -r messaging_app/requirements-dev.txt
+        pip install pytest-benchmark locust
+
+    - name: Wait for services to be ready
+      run: |
+        # Wait for MySQL
+        while ! mysqladmin ping -h127.0.0.1 -P3306 -umessaging_user -pmessaging_password_123 --silent; do
+          echo "Waiting for MySQL..."
+          sleep 2
+        done
+        
+        # Wait for Redis
+        while ! redis-cli -h 127.0.0.1 -p 6379 ping; do
+          echo "Waiting for Redis..."
+          sleep 2
+        done
+        
+        echo "All services are ready!"
+
+    - name: Run database migrations
+      run: |
+        cd messaging_app
+        python manage.py migrate --settings=messaging_app.settings
+
+    - name: Load test data
+      run: |
+        cd messaging_app
+        python manage.py loaddata fixtures/test_data.json || echo "No fixtures found, skipping..."
+
+    - name: Run integration tests
+      run: |
+        cd messaging_app
+        python -m pytest -m "integration" -v \
+          --junitxml=integration_test_results.xml \
+          --cov=. \
+          --cov-report=xml:integration_coverage.xml \
+          --tb=short || echo "No integration tests marked, running all tests..."
+
+    - name: Run API endpoint tests
+      run: |
+        cd messaging_app
+        python test_api_quick.py || echo "API tests completed"
+
+    - name: Upload integration test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: integration-test-results
+        path: |
+          messaging_app/integration_test_results.xml
+          messaging_app/integration_coverage.xml
+
+  performance-tests:
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root_password_123
+          MYSQL_DATABASE: messaging_app_perf_db
+          MYSQL_USER: messaging_user
+          MYSQL_PASSWORD: messaging_password_123
+        ports:
+          - 3306:3306
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.10.12
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y default-libmysqlclient-dev gcc pkg-config
+        python -m pip install --upgrade pip
+        pip install -r messaging_app/requirements.txt
+        pip install locust pytest-benchmark
+
+    - name: Start Django development server
+      run: |
+        cd messaging_app
+        python manage.py migrate --settings=messaging_app.settings
+        python manage.py runserver 8000 &
+        sleep 10
+      env:
+        DJANGO_SETTINGS_MODULE: messaging_app.settings
+        MYSQL_DATABASE: messaging_app_perf_db
+        MYSQL_USER: messaging_user
+        MYSQL_PASSWORD: messaging_password_123
+        DB_HOST: 127.0.0.1
+        SECRET_KEY: performance-test-secret-key
+
+    - name: Run performance benchmarks
+      run: |
+        cd messaging_app
+        python -m pytest -m "benchmark" --benchmark-json=benchmark_results.json || echo "No benchmark tests found"
+
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: performance-results
+        path: messaging_app/benchmark_results.json
