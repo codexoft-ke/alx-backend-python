@@ -15,6 +15,9 @@ pipeline {
                 git credentialsId: 'github-credentials', 
                     url: 'https://github.com/codexoft-ke/alx-backend-python.git',
                     branch: 'main'
+                
+                // Show current git branch
+                sh 'git branch'
             }
         }
         
@@ -24,12 +27,11 @@ pipeline {
                 script {
                     // Install Python dependencies
                     sh '''
-                        cd messaging_app
                         python3 -m venv venv
                         . venv/bin/activate
-                        pip install --upgrade pip
-                        pip install -r requirements.txt
-                        pip install -r requirements-dev.txt
+                        pip3 install --upgrade pip
+                        pip3 install -r messaging_app/requirements.txt
+                        pip3 install -r messaging_app/requirements-dev.txt
                         echo "Dependencies installed successfully"
                     '''
                 }
@@ -41,8 +43,8 @@ pipeline {
                 echo 'Running code linting with flake8...'
                 script {
                     sh '''
-                        cd messaging_app
                         . venv/bin/activate
+                        cd messaging_app
                         flake8 --max-line-length=88 --exclude=venv,migrations,__pycache__,.git --exit-zero . > flake8_report.txt
                         echo "Linting completed"
                     '''
@@ -55,8 +57,8 @@ pipeline {
                 echo 'Setting up test database...'
                 script {
                     sh '''
-                        cd messaging_app
                         . venv/bin/activate
+                        cd messaging_app
                         python manage.py migrate --settings=messaging_app.settings
                         echo "Database migration completed"
                     '''
@@ -69,8 +71,8 @@ pipeline {
                 echo 'Running tests with pytest...'
                 script {
                     sh '''
-                        cd messaging_app
                         . venv/bin/activate
+                        cd messaging_app
                         
                         # Run Django tests with pytest
                         python -m pytest test_*.py -v \
@@ -95,8 +97,8 @@ pipeline {
                 echo 'Generating test and coverage reports...'
                 script {
                     sh '''
-                        cd messaging_app
                         . venv/bin/activate
+                        cd messaging_app
                         
                         # Generate coverage report if not already generated
                         if [ -f ".coverage" ]; then
